@@ -24,6 +24,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
 
 import org.apache.hadoop.hbase.HRegionInfo;
@@ -36,21 +38,29 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.WritableUtils;
-
-import com.google.common.collect.Lists;
 import org.apache.phoenix.cache.GlobalCache;
 import org.apache.phoenix.cache.TenantCache;
+import org.apache.phoenix.expression.Expression;
+import org.apache.phoenix.expression.KeyValueColumnExpression;
 import org.apache.phoenix.expression.OrderByExpression;
+import org.apache.phoenix.expression.function.ArrayIndexFunction;
 import org.apache.phoenix.iterate.OrderedResultIterator;
 import org.apache.phoenix.iterate.RegionScannerResultIterator;
 import org.apache.phoenix.iterate.ResultIterator;
 import org.apache.phoenix.join.HashJoinInfo;
 import org.apache.phoenix.join.ScanProjector;
 import org.apache.phoenix.memory.MemoryManager.MemoryChunk;
+import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.schema.KeyValueSchema;
+import org.apache.phoenix.schema.KeyValueSchema.KeyValueSchemaBuilder;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.ValueBitSet;
+import org.apache.phoenix.schema.tuple.MultiKeyValueTuple;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ScanUtil;
 import org.apache.phoenix.util.ServerUtil;
+
+import com.google.common.collect.Lists;
 
 
 /**
@@ -120,6 +130,38 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             }
         }
     }
+    
+    public static void deserializeArrayPostionalExpressionInfoFromScan(Scan scan, RegionScanner s,
+            List<KeyValueColumnExpression> arrayKVRefs, List<Expression> arrayFuncRefs) {
+        byte[] specificArrayIdx = scan.getAttribute(QueryConstants.SPECIFIC_ARRAY_INDEX);
+        if (specificArrayIdx == null) {
+            return;
+        }
+        ByteArrayInputStream stream = new ByteArrayInputStream(specificArrayIdx);
+        try {
+            DataInputStream input = new DataInputStream(stream);
+            int arrayKVRefSize = WritableUtils.readVInt(input);
+            for (int i = 0; i < arrayKVRefSize; i++) {
+                KeyValueColumnExpression kvExp = new KeyValueColumnExpression();
+                kvExp.readFields(input);
+                arrayKVRefs.add(kvExp);
+            }
+            int arrayKVFuncSize = WritableUtils.readVInt(input);
+            for (int i = 0; i < arrayKVFuncSize; i++) {
+                ArrayIndexFunction arrayIdxFunc = new ArrayIndexFunction();
+                arrayIdxFunc.readFields(input);
+                arrayFuncRefs.add(arrayIdxFunc);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } finally {
+            try {
+                stream.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
 
     @Override
     protected RegionScanner doPostScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> c, final Scan scan, final RegionScanner s) throws Throwable {
@@ -139,10 +181,14 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
         }
         
         final OrderedResultIterator iterator = deserializeFromScan(scan,innerScanner);
+        List<KeyValueColumnExpression> arrayKVRefs = new ArrayList<KeyValueColumnExpression>();
+        List<Expression> arrayFuncRefs = new ArrayList<Expression>();
+        deserializeArrayPostionalExpressionInfoFromScan(
+                scan, innerScanner, arrayKVRefs, arrayFuncRefs);
         if (iterator == null) {
-            return getWrappedScanner(c, innerScanner);
+            return getWrappedScanner(c, innerScanner, arrayKVRefs, arrayFuncRefs);
         }
-        
+        // TODO:the above wrapped scanner should be used here also
         return getTopNScanner(c, innerScanner, iterator, tenantId);
     }
     
@@ -219,8 +265,11 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
      * re-throws as DoNotRetryIOException to prevent needless retrying hanging the query
      * for 30 seconds. Unfortunately, until HBASE-7481 gets fixed, there's no way to do
      * the same from a custom filter.
+     * @param arrayFuncRefs 
+     * @param arrayKVRefs 
      */
-    private RegionScanner getWrappedScanner(final ObserverContext<RegionCoprocessorEnvironment> c, final RegionScanner s) {
+    private RegionScanner getWrappedScanner(final ObserverContext<RegionCoprocessorEnvironment> c, final RegionScanner s, 
+           final List<KeyValueColumnExpression> arrayKVRefs, final List<Expression> arrayFuncRefs) {
         return new RegionScanner() {
 
             @Override
@@ -291,17 +340,31 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             @Override
             public boolean nextRaw(List<KeyValue> result, String metric) throws IOException {
                 try {
-                    return s.nextRaw(result, metric);
+                    boolean next = s.nextRaw(result, metric);
+                    if(result.size() == 0) {
+                        return next;
+                    } else if(arrayFuncRefs.size() == 0 || arrayKVRefs.size() == 0) {
+                        return next;
+                    }
+                    replaceArrayIndexElement(arrayKVRefs, arrayFuncRefs, result);
+                    return next;
                 } catch (Throwable t) {
                     ServerUtil.throwIOException(c.getEnvironment().getRegion().getRegionNameAsString(), t);
                     return false; // impossible
                 }
             }
 
+            
+
             @Override
             public boolean nextRaw(List<KeyValue> result, int limit, String metric) throws IOException {
                 try {
-                    return s.nextRaw(result, limit, metric);
+                    boolean next = s.nextRaw(result, limit, metric);
+                    if(result.size() == 0) {
+                        return next;
+                    }
+                    replaceArrayIndexElement(arrayKVRefs, arrayFuncRefs, result);
+                    return next;
                 } catch (Throwable t) {
                     ServerUtil.throwIOException(c.getEnvironment().getRegion().getRegionNameAsString(), t);
                     return false; // impossible
@@ -309,5 +372,39 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             }
         };
     }
+    
+    public static void replaceArrayIndexElement(final List<KeyValueColumnExpression> arrayKVRefs,
+            final List<Expression> arrayFuncRefs, List<KeyValue> result) {
+        List<KeyValue> newResult = new LinkedList<KeyValue>();
+        MultiKeyValueTuple tuple = new MultiKeyValueTuple(result);
+        // The size of both the arrays would be same?
+        for (int i = 0; i < arrayKVRefs.size(); i++) {
+            ImmutableBytesWritable ptr = new ImmutableBytesWritable();
+            KeyValueColumnExpression kvExp = arrayKVRefs.get(i);
+            if (kvExp.evaluate(tuple, ptr)) {
+                for (int idx = 0; idx < tuple.size(); idx++) {
+                    KeyValue kv = tuple.getValue(idx);
+                    if (Bytes.equals(kvExp.getColumnFamily(), kv.getFamily())
+                            && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {
+                        result.remove(kv);
+                        KeyValueSchemaBuilder builder = new KeyValueSchemaBuilder(0);
+                        Expression arrIdxFunc = arrayFuncRefs.get(i);
+                        builder.addField(arrIdxFunc);
 
+                        KeyValueSchema kvSchema = builder.build();
+                        byte[] value = kvSchema.toBytes(tuple,
+                                arrayFuncRefs.toArray(new Expression[arrayFuncRefs.size()]),
+                                ValueBitSet.newInstance(kvSchema), new ImmutableBytesWritable());
+                        newResult.add(new KeyValue(QueryConstants.ARRAY_DUMMY_ROW,
+                                ScanProjector.VALUE_COLUMN_FAMILY, ScanProjector.VALUE_COLUMN_QUALIFIER,
+                                value));
+                    } else {
+                        newResult.add(kv);
+                    }
+                }
+            }
+        }
+        result.clear();
+        result.addAll(newResult);
+    }
 }
