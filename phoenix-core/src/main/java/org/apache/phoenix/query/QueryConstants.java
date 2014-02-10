@@ -117,10 +117,7 @@ public interface QueryConstants {
     public final static PName AGG_COLUMN_FAMILY_NAME = SINGLE_COLUMN_FAMILY_NAME;
 
     public final static PName ARRAY_DUMMY_COLUMN_NAME = new PNormalizedName("_ARRAY_DUMMY");
-    public final static PName ARRAY_DUMMY_COLUMN_FAMILYNAME = new PNormalizedName("_ARRAY_DUMMY");
     public final static byte[] ARRAY_DUMMY_ROW = ARRAY_DUMMY_COLUMN_NAME.getBytes();
-    public final static byte[] ARRAY_DUMMY_COLUMN = ARRAY_DUMMY_COLUMN_NAME.getBytes();
-    public final static byte[] ARRAY_DUMMY_COLUMN_FAMILY = ARRAY_DUMMY_COLUMN_FAMILYNAME.getBytes();
 
     public static final byte[] TRUE = new byte[] {1};
 

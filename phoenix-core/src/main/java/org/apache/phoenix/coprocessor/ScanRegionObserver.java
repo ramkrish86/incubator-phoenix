@@ -363,7 +363,10 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                     boolean next = s.nextRaw(result, limit, metric);
                     if (result.size() == 0) {
                         return next;
-                    } else if ((arrayFuncRefs != null && arrayFuncRefs.length == 0) || arrayKVRefs.size() == 0) { return next; }
+                    } else if ((arrayFuncRefs != null && arrayFuncRefs.length == 0) || arrayKVRefs.size() == 0) { 
+                        return next; 
+                    }
+                    // There is a scanattribute set to retrieve the specific array element
                     replaceArrayIndexElement(arrayKVRefs, arrayFuncRefs, result);
                     return next;
                 } catch (Throwable t) {
@@ -377,6 +380,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 MultiKeyValueTuple tuple = new MultiKeyValueTuple(result);
                 KeyValueSchemaBuilder builder = new KeyValueSchemaBuilder(0);
                 // The size of both the arrays would be same?
+                // Using KeyValueSchema to set and retrieve the value
                 for (int i = 0; i < arrayKVRefs.size(); i++) {
                     KeyValueColumnExpression kvExp = arrayKVRefs.get(i);
                     if (kvExp.evaluate(tuple, ptr)) {
@@ -384,6 +388,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                             KeyValue kv = tuple.getValue(idx);
                             if (Bytes.equals(kvExp.getColumnFamily(), kv.getFamily())
                                     && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {
+                                // remove the kv that has the full array values.
                                 result.remove(kv);
                                 Expression arrIdxFunc = arrayFuncRefs[i];
                                 builder.addField(arrIdxFunc);
@@ -395,6 +400,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 }
                 byte[] value = kvSchema.toBytes(tuple, arrayFuncRefs,
                         ValueBitSet.newInstance(kvSchema), new ImmutableBytesWritable());
+                // Add a dummy kv with the exact value of the array index
                 result.add(new KeyValue(QueryConstants.ARRAY_DUMMY_ROW,
                         ScanProjector.VALUE_COLUMN_FAMILY, ScanProjector.VALUE_COLUMN_QUALIFIER, value));
             }

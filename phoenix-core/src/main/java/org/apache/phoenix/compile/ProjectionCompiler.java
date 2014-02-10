@@ -325,6 +325,7 @@ public class ProjectionCompiler {
         return new RowProjector(projectedColumns, estimatedByteSize, isProjectEmptyKeyValue);
     }
 
+    // A replaced ArrayIndex function that retrieves the exact array value retrieved from the server
     static class ArrayIndexExpression extends BaseTerminalExpression {
         private final int position;
         private final PDataType type;
@@ -360,11 +361,12 @@ public class ProjectionCompiler {
         ByteArrayOutputStream stream = new ByteArrayOutputStream();
         try {
             DataOutputStream output = new DataOutputStream(stream);
+            // Write the arrayKVRef size followed by the keyvalues that needs to be of type arrayindex function
             WritableUtils.writeVInt(output, arrayKVRefs.size());
             for (Expression expression : arrayKVRefs) {
                     expression.write(output);
             }
-            
+            // then write the number of arrayindex functions followeed by the expression itself
             WritableUtils.writeVInt(output, arrayKVFuncs.size());
             for (Expression expression : arrayKVFuncs) {
                     expression.write(output);
@@ -453,8 +455,6 @@ public class ProjectionCompiler {
             super.reset();
             elementCount = 0;
             isCaseSensitive = true;
-            //this.arrayKVRefs.clear();
-            //this.arrayKVFuncs.clear();
         }
         
         @Override
@@ -484,6 +484,7 @@ public class ProjectionCompiler {
         @Override
         public Expression visitLeave(FunctionParseNode node, List<Expression> children) throws SQLException {
             Expression func = super.visitLeave(node,children);
+            // this need not be done for group by clause with array. Hence the below check
             if (!statement.isAggregate() && ArrayIndexFunction.NAME.equals(node.getName())) {
                  final List<KeyValueColumnExpression> indexKVs = Lists.newArrayList();
                  // Create anon visitor to find reference to array in a generic way
@@ -496,9 +497,12 @@ public class ProjectionCompiler {
                          return null;
                      }
                  });
+                 // Add the keyvalues which is of type array
                  if (!indexKVs.isEmpty()) {
                     arrayKVRefs.addAll(indexKVs);
+                    // Track the array index function also 
                     arrayKVFuncs.add(func);
+                    // Store the index of the array index function in the select query list
                     func = replaceArrayIndexFunction(func, arrayKVFuncs.size() - 1);
                     return func;
                 }
