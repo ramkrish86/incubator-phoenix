@@ -25,7 +25,6 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 
 import org.apache.hadoop.hbase.HRegionInfo;
@@ -76,7 +75,8 @@ import com.google.common.collect.Lists;
 public class ScanRegionObserver extends BaseScannerRegionObserver {
     public static final String NON_AGGREGATE_QUERY = "NonAggregateQuery";
     private static final String TOPN = "TopN";
-
+    ImmutableBytesWritable ptr = new ImmutableBytesWritable();
+    KeyValueSchema kvSchema = null;
     public static void serializeIntoScan(Scan scan, int thresholdBytes, int limit, List<OrderByExpression> orderByExpressions, int estimatedRowSize) {
         ByteArrayOutputStream stream = new ByteArrayOutputStream(); // TODO: size?
         try {
@@ -131,11 +131,11 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
         }
     }
     
-    public static void deserializeArrayPostionalExpressionInfoFromScan(Scan scan, RegionScanner s,
-            List<KeyValueColumnExpression> arrayKVRefs, List<Expression> arrayFuncRefs) {
+    public static Expression[] deserializeArrayPostionalExpressionInfoFromScan(Scan scan, RegionScanner s,
+            List<KeyValueColumnExpression> arrayKVRefs) {
         byte[] specificArrayIdx = scan.getAttribute(QueryConstants.SPECIFIC_ARRAY_INDEX);
         if (specificArrayIdx == null) {
-            return;
+            return null;
         }
         ByteArrayInputStream stream = new ByteArrayInputStream(specificArrayIdx);
         try {
@@ -147,11 +147,13 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 arrayKVRefs.add(kvExp);
             }
             int arrayKVFuncSize = WritableUtils.readVInt(input);
+            Expression[] arrayFuncRefs = new Expression[arrayKVFuncSize];
             for (int i = 0; i < arrayKVFuncSize; i++) {
                 ArrayIndexFunction arrayIdxFunc = new ArrayIndexFunction();
                 arrayIdxFunc.readFields(input);
-                arrayFuncRefs.add(arrayIdxFunc);
+                arrayFuncRefs[i] = arrayIdxFunc;
             }
+            return arrayFuncRefs;
         } catch (IOException e) {
             throw new RuntimeException(e);
         } finally {
@@ -182,9 +184,8 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
         
         final OrderedResultIterator iterator = deserializeFromScan(scan,innerScanner);
         List<KeyValueColumnExpression> arrayKVRefs = new ArrayList<KeyValueColumnExpression>();
-        List<Expression> arrayFuncRefs = new ArrayList<Expression>();
-        deserializeArrayPostionalExpressionInfoFromScan(
-                scan, innerScanner, arrayKVRefs, arrayFuncRefs);
+        Expression[] arrayFuncRefs = deserializeArrayPostionalExpressionInfoFromScan(
+                scan, innerScanner, arrayKVRefs);
         if (iterator == null) {
             return getWrappedScanner(c, innerScanner, arrayKVRefs, arrayFuncRefs);
         }
@@ -269,7 +270,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
      * @param arrayKVRefs 
      */
     private RegionScanner getWrappedScanner(final ObserverContext<RegionCoprocessorEnvironment> c, final RegionScanner s, 
-           final List<KeyValueColumnExpression> arrayKVRefs, final List<Expression> arrayFuncRefs) {
+           final List<KeyValueColumnExpression> arrayKVRefs, final Expression[] arrayFuncRefs) {
         return new RegionScanner() {
 
             @Override
@@ -343,7 +344,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                     boolean next = s.nextRaw(result, metric);
                     if(result.size() == 0) {
                         return next;
-                    } else if(arrayFuncRefs.size() == 0 || arrayKVRefs.size() == 0) {
+                    } else if((arrayFuncRefs != null && arrayFuncRefs.length == 0) || arrayKVRefs.size() == 0) {
                         return next;
                     }
                     replaceArrayIndexElement(arrayKVRefs, arrayFuncRefs, result);
@@ -360,9 +361,9 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             public boolean nextRaw(List<KeyValue> result, int limit, String metric) throws IOException {
                 try {
                     boolean next = s.nextRaw(result, limit, metric);
-                    if(result.size() == 0) {
+                    if (result.size() == 0) {
                         return next;
-                    }
+                    } else if ((arrayFuncRefs != null && arrayFuncRefs.length == 0) || arrayKVRefs.size() == 0) { return next; }
                     replaceArrayIndexElement(arrayKVRefs, arrayFuncRefs, result);
                     return next;
                 } catch (Throwable t) {
@@ -370,41 +371,35 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                     return false; // impossible
                 }
             }
+
+            private void replaceArrayIndexElement(final List<KeyValueColumnExpression> arrayKVRefs,
+                    final Expression[] arrayFuncRefs, List<KeyValue> result) {
+                MultiKeyValueTuple tuple = new MultiKeyValueTuple(result);
+                KeyValueSchemaBuilder builder = new KeyValueSchemaBuilder(0);
+                // The size of both the arrays would be same?
+                for (int i = 0; i < arrayKVRefs.size(); i++) {
+                    KeyValueColumnExpression kvExp = arrayKVRefs.get(i);
+                    if (kvExp.evaluate(tuple, ptr)) {
+                        for (int idx = 0; idx < tuple.size(); idx++) {
+                            KeyValue kv = tuple.getValue(idx);
+                            if (Bytes.equals(kvExp.getColumnFamily(), kv.getFamily())
+                                    && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {
+                                result.remove(kv);
+                                Expression arrIdxFunc = arrayFuncRefs[i];
+                                builder.addField(arrIdxFunc);
+                                kvSchema = builder.build();
+                                break;
+                            }
+                        }
+                    }
+                }
+                byte[] value = kvSchema.toBytes(tuple, arrayFuncRefs,
+                        ValueBitSet.newInstance(kvSchema), new ImmutableBytesWritable());
+                result.add(new KeyValue(QueryConstants.ARRAY_DUMMY_ROW,
+                        ScanProjector.VALUE_COLUMN_FAMILY, ScanProjector.VALUE_COLUMN_QUALIFIER, value));
+            }
         };
     }
     
-    public static void replaceArrayIndexElement(final List<KeyValueColumnExpression> arrayKVRefs,
-            final List<Expression> arrayFuncRefs, List<KeyValue> result) {
-        List<KeyValue> newResult = new LinkedList<KeyValue>();
-        MultiKeyValueTuple tuple = new MultiKeyValueTuple(result);
-        // The size of both the arrays would be same?
-        for (int i = 0; i < arrayKVRefs.size(); i++) {
-            ImmutableBytesWritable ptr = new ImmutableBytesWritable();
-            KeyValueColumnExpression kvExp = arrayKVRefs.get(i);
-            if (kvExp.evaluate(tuple, ptr)) {
-                for (int idx = 0; idx < tuple.size(); idx++) {
-                    KeyValue kv = tuple.getValue(idx);
-                    if (Bytes.equals(kvExp.getColumnFamily(), kv.getFamily())
-                            && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {
-                        result.remove(kv);
-                        KeyValueSchemaBuilder builder = new KeyValueSchemaBuilder(0);
-                        Expression arrIdxFunc = arrayFuncRefs.get(i);
-                        builder.addField(arrIdxFunc);
-
-                        KeyValueSchema kvSchema = builder.build();
-                        byte[] value = kvSchema.toBytes(tuple,
-                                arrayFuncRefs.toArray(new Expression[arrayFuncRefs.size()]),
-                                ValueBitSet.newInstance(kvSchema), new ImmutableBytesWritable());
-                        newResult.add(new KeyValue(QueryConstants.ARRAY_DUMMY_ROW,
-                                ScanProjector.VALUE_COLUMN_FAMILY, ScanProjector.VALUE_COLUMN_QUALIFIER,
-                                value));
-                    } else {
-                        newResult.add(kv);
-                    }
-                }
-            }
-        }
-        result.clear();
-        result.addAll(newResult);
-    }
+    
 }

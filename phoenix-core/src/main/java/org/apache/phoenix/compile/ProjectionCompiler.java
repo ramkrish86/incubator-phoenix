@@ -200,7 +200,7 @@ public class ProjectionCompiler {
         List<Expression> arrayKVFuncs = new ArrayList<Expression>();
         List<AliasedNode> aliasedNodes = statement.getSelect();
         // Setup projected columns in Scan
-        SelectClauseVisitor selectVisitor = new SelectClauseVisitor(context, groupBy, arrayKVRefs, arrayKVFuncs);
+        SelectClauseVisitor selectVisitor = new SelectClauseVisitor(context, groupBy, arrayKVRefs, arrayKVFuncs, statement);
         List<ExpressionProjector> projectedColumns = new ArrayList<ExpressionProjector>();
         TableRef tableRef = context.getResolver().getTables().get(0);
         PTable table = tableRef.getTable();
@@ -403,12 +403,14 @@ public class ProjectionCompiler {
         private int elementCount;
         private List<KeyValueColumnExpression> arrayKVRefs;
         private List<Expression> arrayKVFuncs;
+        private SelectStatement statement; 
         
         private SelectClauseVisitor(StatementContext context, GroupBy groupBy, 
-                List<KeyValueColumnExpression> arrayKVRefs, List<Expression> arrayKVFuncs) {
+                List<KeyValueColumnExpression> arrayKVRefs, List<Expression> arrayKVFuncs, SelectStatement statement) {
             super(context, groupBy);
             this.arrayKVRefs = arrayKVRefs;
             this.arrayKVFuncs = arrayKVFuncs;
+            this.statement = statement;
             reset();
         }
 
@@ -451,7 +453,7 @@ public class ProjectionCompiler {
             super.reset();
             elementCount = 0;
             isCaseSensitive = true;
-           // this.arrayKVRefs.clear();
+            //this.arrayKVRefs.clear();
             //this.arrayKVFuncs.clear();
         }
         
@@ -482,7 +484,7 @@ public class ProjectionCompiler {
         @Override
         public Expression visitLeave(FunctionParseNode node, List<Expression> children) throws SQLException {
             Expression func = super.visitLeave(node,children);
-            if (ArrayIndexFunction.NAME.equals(node.getName())) {
+            if (!statement.isAggregate() && ArrayIndexFunction.NAME.equals(node.getName())) {
                  final List<KeyValueColumnExpression> indexKVs = Lists.newArrayList();
                  // Create anon visitor to find reference to array in a generic way
                  children.get(0).accept(new KeyValueExpressionVisitor() {
@@ -495,16 +497,10 @@ public class ProjectionCompiler {
                      }
                  });
                  if (!indexKVs.isEmpty()) {
-                       // We could try to detect the same ArrayIndexFunction with the same index
-                       // and then consolidate them, but it's not really worth it.
-                     if(func instanceof ArrayIndexFunction) {
-                       arrayKVRefs.addAll(indexKVs);
-                       // Add original func to list that'll get passed to server
-                       arrayKVFuncs.add(func);
-                       // Wrap the client-side func that'll lookup by index the server-side evaluated value
+                    arrayKVRefs.addAll(indexKVs);
+                    arrayKVFuncs.add(func);
                     func = replaceArrayIndexFunction(func, arrayKVFuncs.size() - 1);
-                       return func;
-                     }
+                    return func;
                 }
             }
             return func;

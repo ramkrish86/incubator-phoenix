@@ -608,6 +608,93 @@ public class ArrayTest extends BaseClientManagedTimeTest {
             conn.close();
         }
     }
+    
+    @Test
+    public void testSelectMultipleArrayColumns() throws Exception {
+        long ts = nextTimestamp();
+        String tenantId = getOrganizationId();
+        createTableWithArray(BaseConnectedQueryTest.getUrl(),
+                getDefaultSplits(tenantId), null, ts - 2);
+        initTablesWithArrays(tenantId, null, ts, false);
+        String query = "SELECT  a_string_array[2], a_double_array[1] FROM table_with_array";
+        Properties props = new Properties(TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB,
+                Long.toString(ts + 2)); // Execute at timestamp 2
+        Connection conn = DriverManager.getConnection(PHOENIX_JDBC_URL, props);
+        try {
+            PreparedStatement statement = conn.prepareStatement(query);
+            ResultSet rs = statement.executeQuery();
+            assertTrue(rs.next());
+            String[] strArr = new String[1];
+            strArr[0] = "XYZWER";
+            Double[] doubleArr = new Double[1];
+            doubleArr[0] = 36.763d;
+            Double a_double = rs.getDouble(2);
+            assertEquals(doubleArr[0], a_double);
+            String result = rs.getString(1);
+            assertEquals(strArr[0], result);
+            assertFalse(rs.next());
+        } finally {
+            conn.close();
+        } 
+    }
+    
+    @Test
+    public void testSelectSameArrayColumnMultipleTimesWithDifferentIndices() throws Exception {
+        long ts = nextTimestamp();
+        String tenantId = getOrganizationId();
+        createTableWithArray(BaseConnectedQueryTest.getUrl(),
+                getDefaultSplits(tenantId), null, ts - 2);
+        initTablesWithArrays(tenantId, null, ts, false);
+        String query = "SELECT a_string_array[0], a_string_array[2] FROM table_with_array";
+        Properties props = new Properties(TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB,
+                Long.toString(ts + 2)); // Execute at timestamp 2
+        Connection conn = DriverManager.getConnection(PHOENIX_JDBC_URL, props);
+        try {
+            PreparedStatement statement = conn.prepareStatement(query);
+            ResultSet rs = statement.executeQuery();
+            assertTrue(rs.next());
+            String[] strArr = new String[2];
+            strArr[0] = "ABC";
+            strArr[1] = "XYZWER";
+            String result = rs.getString(1);
+            assertEquals(strArr[0], result);
+            result = rs.getString(2);
+            assertEquals(strArr[1], result);
+            assertFalse(rs.next());
+        } finally {
+            conn.close();
+        } 
+    }
+    
+    @Test
+    public void testSelectSameArrayColumnMultipleTimesWithSameIndices() throws Exception {
+        long ts = nextTimestamp();
+        String tenantId = getOrganizationId();
+        createTableWithArray(BaseConnectedQueryTest.getUrl(),
+                getDefaultSplits(tenantId), null, ts - 2);
+        initTablesWithArrays(tenantId, null, ts, false);
+        String query = "SELECT a_string_array[2], a_string_array[2] FROM table_with_array";
+        Properties props = new Properties(TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB,
+                Long.toString(ts + 2)); // Execute at timestamp 2
+        Connection conn = DriverManager.getConnection(PHOENIX_JDBC_URL, props);
+        try {
+            PreparedStatement statement = conn.prepareStatement(query);
+            ResultSet rs = statement.executeQuery();
+            assertTrue(rs.next());
+            String[] strArr = new String[1];
+            strArr[0] = "XYZWER";
+            String result = rs.getString(1);
+            assertEquals(strArr[0], result);
+            result = rs.getString(2);
+            assertEquals(strArr[0], result);
+            assertFalse(rs.next());
+        } finally {
+            conn.close();
+        } 
+    }
 
 	@Test
 	public void testSelectSpecificIndexOfAVariableArray() throws Exception {
