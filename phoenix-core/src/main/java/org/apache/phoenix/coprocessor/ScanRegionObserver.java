@@ -393,7 +393,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 for (int i = 0; i < arrayKVRefs.size(); i++) {
                     KeyValueColumnExpression kvExp = arrayKVRefs.get(i);
                     if (kvExp.evaluate(tuple, ptr)) {
-                        for (int idx = 0; idx < tuple.size(); idx++) {
+                        for (int idx = tuple.size() - 1; idx >= 0; idx--) {
                             KeyValue kv = tuple.getValue(idx);
                             if (Bytes.equals(kvExp.getColumnFamily(), kv.getFamily())
                                     && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {

@@ -75,6 +75,7 @@ import org.apache.phoenix.schema.RowKeySchema;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.ValueBitSet;
 import org.apache.phoenix.schema.tuple.Tuple;
+import org.apache.phoenix.util.ByteUtil;
 import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.SizedUtil;
@@ -345,8 +346,9 @@ public class ProjectionCompiler {
             arrayIndexesSchema.iterator(ptr, position, arrayIndexesBitSet);
             Boolean hasValue = arrayIndexesSchema.next(ptr, position, maxOffset, arrayIndexesBitSet);
             arrayIndexesBitSet.clear();
-            if (hasValue == null || !hasValue.booleanValue()) return false;
-
+            if (hasValue == null) {
+                ptr.set(ByteUtil.EMPTY_BYTE_ARRAY);
+            }
             return true;
         }
 
