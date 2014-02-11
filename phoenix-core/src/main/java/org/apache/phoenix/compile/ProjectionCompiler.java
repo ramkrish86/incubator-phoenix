@@ -49,7 +49,6 @@ import org.apache.phoenix.expression.function.ArrayIndexFunction;
 import org.apache.phoenix.expression.function.SingleAggregateFunction;
 import org.apache.phoenix.expression.visitor.KeyValueExpressionVisitor;
 import org.apache.phoenix.expression.visitor.SingleAggregateFunctionVisitor;
-import org.apache.phoenix.join.ScanProjector;
 import org.apache.phoenix.parse.AliasedNode;
 import org.apache.phoenix.parse.BindParseNode;
 import org.apache.phoenix.parse.ColumnParseNode;
@@ -337,17 +336,17 @@ public class ProjectionCompiler {
 
         @Override
         public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
-            try {
-                ScanProjector.decodeProjectedValue(tuple, ptr);
-                int maxOffset = ptr.getOffset() + ptr.getLength();
-                arrayIndexesBitSet.or(ptr);
-                arrayIndexesSchema.iterator(ptr, position, arrayIndexesBitSet);
-                Boolean hasValue = arrayIndexesSchema.next(ptr, position, maxOffset, arrayIndexesBitSet);
-                arrayIndexesBitSet.clear();
-                if (hasValue == null || !hasValue.booleanValue()) return false;
-            } catch (IOException e) {
-                return false;
+            if (!tuple.getValue(QueryConstants.ARRAY_VALUE_COLUMN_FAMILY, QueryConstants.ARRAY_VALUE_COLUMN_QUALIFIER,
+                    ptr)) { 
+              return false; 
             }
+            int maxOffset = ptr.getOffset() + ptr.getLength();
+            arrayIndexesBitSet.or(ptr);
+            arrayIndexesSchema.iterator(ptr, position, arrayIndexesBitSet);
+            Boolean hasValue = arrayIndexesSchema.next(ptr, position, maxOffset, arrayIndexesBitSet);
+            arrayIndexesBitSet.clear();
+            if (hasValue == null || !hasValue.booleanValue()) return false;
+
             return true;
         }
 

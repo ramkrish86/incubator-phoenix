@@ -27,8 +27,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.KeyValue.Type;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
@@ -191,8 +193,9 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
         List<KeyValueColumnExpression> arrayKVRefs = new ArrayList<KeyValueColumnExpression>();
         Expression[] arrayFuncRefs = deserializeArrayPostionalExpressionInfoFromScan(
                 scan, innerScanner, arrayKVRefs);
+        innerScanner = getWrappedScanner(c, innerScanner, arrayKVRefs, arrayFuncRefs);
         if (iterator == null) {
-            return getWrappedScanner(c, innerScanner, arrayKVRefs, arrayFuncRefs);
+            return innerScanner;
         }
         // TODO:the above wrapped scanner should be used here also
         return getTopNScanner(c, innerScanner, iterator, tenantId);
@@ -385,6 +388,8 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 MultiKeyValueTuple tuple = new MultiKeyValueTuple(result);
                 // The size of both the arrays would be same?
                 // Using KeyValueSchema to set and retrieve the value
+                // collect the first kv to get the row
+                KeyValue rowKv = result.get(0);
                 for (int i = 0; i < arrayKVRefs.size(); i++) {
                     KeyValueColumnExpression kvExp = arrayKVRefs.get(i);
                     if (kvExp.evaluate(tuple, ptr)) {
@@ -393,7 +398,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                             if (Bytes.equals(kvExp.getColumnFamily(), kv.getFamily())
                                     && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {
                                 // remove the kv that has the full array values.
-                                result.remove(kv);
+                                result.remove(idx);
                                 break;
                             }
                         }
@@ -401,10 +406,12 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 }
                 byte[] value = kvSchema.toBytes(tuple, arrayFuncRefs,
                         kvSchemaBitSet, ptr);
-                KeyValue kv = result.get(0);
                 // Add a dummy kv with the exact value of the array index
-                result.add(new KeyValue(kv.getRow(), QueryConstants.ARRAY_VALUE_COLUMN_FAMILY,
-                        QueryConstants.ARRAY_VALUE_COLUMN_QUALIFIER, value));
+                result.add(new KeyValue(rowKv.getBuffer(), rowKv.getRowOffset(), rowKv.getRowLength(),
+                        QueryConstants.ARRAY_VALUE_COLUMN_FAMILY, 0, QueryConstants.ARRAY_VALUE_COLUMN_FAMILY.length,
+                        QueryConstants.ARRAY_VALUE_COLUMN_QUALIFIER, 0,
+                        QueryConstants.ARRAY_VALUE_COLUMN_QUALIFIER.length, HConstants.LATEST_TIMESTAMP,
+                        Type.codeToType(rowKv.getType()), value, 0, value.length));
             }
         };
     }
