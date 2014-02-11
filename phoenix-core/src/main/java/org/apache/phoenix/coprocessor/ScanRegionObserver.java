@@ -75,8 +75,9 @@ import com.google.common.collect.Lists;
 public class ScanRegionObserver extends BaseScannerRegionObserver {
     public static final String NON_AGGREGATE_QUERY = "NonAggregateQuery";
     private static final String TOPN = "TopN";
-    ImmutableBytesWritable ptr = new ImmutableBytesWritable();
-    KeyValueSchema kvSchema = null;
+    private ImmutableBytesWritable ptr = new ImmutableBytesWritable();
+    private KeyValueSchema kvSchema = null;
+    private ValueBitSet kvSchemaBitSet;
     public static void serializeIntoScan(Scan scan, int thresholdBytes, int limit, List<OrderByExpression> orderByExpressions, int estimatedRowSize) {
         ByteArrayOutputStream stream = new ByteArrayOutputStream(); // TODO: size?
         try {
@@ -131,12 +132,13 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
         }
     }
     
-    public static Expression[] deserializeArrayPostionalExpressionInfoFromScan(Scan scan, RegionScanner s,
+    private Expression[] deserializeArrayPostionalExpressionInfoFromScan(Scan scan, RegionScanner s,
             List<KeyValueColumnExpression> arrayKVRefs) {
         byte[] specificArrayIdx = scan.getAttribute(QueryConstants.SPECIFIC_ARRAY_INDEX);
         if (specificArrayIdx == null) {
             return null;
         }
+        KeyValueSchemaBuilder builder = new KeyValueSchemaBuilder(0);
         ByteArrayInputStream stream = new ByteArrayInputStream(specificArrayIdx);
         try {
             DataInputStream input = new DataInputStream(stream);
@@ -152,7 +154,10 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 ArrayIndexFunction arrayIdxFunc = new ArrayIndexFunction();
                 arrayIdxFunc.readFields(input);
                 arrayFuncRefs[i] = arrayIdxFunc;
+                builder.addField(arrayIdxFunc);
             }
+            kvSchema = builder.build();
+            kvSchemaBitSet = ValueBitSet.newInstance(kvSchema);
             return arrayFuncRefs;
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -378,7 +383,6 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             private void replaceArrayIndexElement(final List<KeyValueColumnExpression> arrayKVRefs,
                     final Expression[] arrayFuncRefs, List<KeyValue> result) {
                 MultiKeyValueTuple tuple = new MultiKeyValueTuple(result);
-                KeyValueSchemaBuilder builder = new KeyValueSchemaBuilder(0);
                 // The size of both the arrays would be same?
                 // Using KeyValueSchema to set and retrieve the value
                 for (int i = 0; i < arrayKVRefs.size(); i++) {
@@ -390,19 +394,17 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                                     && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {
                                 // remove the kv that has the full array values.
                                 result.remove(kv);
-                                Expression arrIdxFunc = arrayFuncRefs[i];
-                                builder.addField(arrIdxFunc);
-                                kvSchema = builder.build();
                                 break;
                             }
                         }
                     }
                 }
                 byte[] value = kvSchema.toBytes(tuple, arrayFuncRefs,
-                        ValueBitSet.newInstance(kvSchema), new ImmutableBytesWritable());
+                        kvSchemaBitSet, ptr);
+                KeyValue kv = result.get(0);
                 // Add a dummy kv with the exact value of the array index
-                result.add(new KeyValue(QueryConstants.ARRAY_DUMMY_ROW,
-                        ScanProjector.VALUE_COLUMN_FAMILY, ScanProjector.VALUE_COLUMN_QUALIFIER, value));
+                result.add(new KeyValue(kv.getRow(), QueryConstants.ARRAY_VALUE_COLUMN_FAMILY,
+                        QueryConstants.ARRAY_VALUE_COLUMN_QUALIFIER, value));
             }
         };
     }

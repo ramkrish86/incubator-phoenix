@@ -115,9 +115,9 @@ public interface QueryConstants {
     public final static byte[] UNGROUPED_AGG_ROW_KEY = Bytes.toBytes("a");
     public final static PName AGG_COLUMN_NAME = SINGLE_COLUMN_NAME;
     public final static PName AGG_COLUMN_FAMILY_NAME = SINGLE_COLUMN_FAMILY_NAME;
-
-    public final static PName ARRAY_DUMMY_COLUMN_NAME = new PNormalizedName("_ARRAY_DUMMY");
-    public final static byte[] ARRAY_DUMMY_ROW = ARRAY_DUMMY_COLUMN_NAME.getBytes();
+    
+    public static final byte[] ARRAY_VALUE_COLUMN_FAMILY = Bytes.toBytes("_v");
+    public static final byte[] ARRAY_VALUE_COLUMN_QUALIFIER = new byte[0];
 
     public static final byte[] TRUE = new byte[] {1};
 
