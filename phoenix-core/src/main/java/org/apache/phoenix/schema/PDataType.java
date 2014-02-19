@@ -5161,7 +5161,6 @@ public enum PDataType {
         if(isArrayType()) {
             PhoenixArray array = (PhoenixArray)o;
             int noOfElements = array.numElements;
-
             int totalVarSize = 0;
             for (int i = 0; i < noOfElements; i++) {
                 totalVarSize += array.estimateByteSize(i);

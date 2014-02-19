@@ -60,8 +60,8 @@ public class PDataTypeForArraysTest {
 	@Test
 	public void testForVarCharArray() {
 		String[] strArr = new String[2];
-		strArr[0] = "ram";
-		strArr[1] = "krishna";
+		strArr[0] = "abc";
+		strArr[1] = "klmnop";
 		PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
 				PDataType.VARCHAR, strArr);
 		byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);

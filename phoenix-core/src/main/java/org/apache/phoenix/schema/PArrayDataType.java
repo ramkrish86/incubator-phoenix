@@ -56,8 +56,8 @@ public class PArrayDataType {
 				// Negate the number of elements
 				noOfElements = -noOfElements;
 			}
-			// Here the int for noofelements, byte for the version and int for the offsetarray position
-			buffer = ByteBuffer.allocate(size + capacity + Bytes.SIZEOF_INT+ Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT);
+			// Here the int for noofelements, byte for the version, int for the offsetarray position and one byte for a null byte
+			buffer = ByteBuffer.allocate(size + capacity + Bytes.SIZEOF_INT+ 2 * Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT);
 		} else {
 		    // Here the int for noofelements, byte for the version
 			buffer = ByteBuffer.allocate(size + Bytes.SIZEOF_INT+ Bytes.SIZEOF_BYTE);
@@ -164,7 +164,7 @@ public class PArrayDataType {
 						offset = indexOffset + (Bytes.SIZEOF_SHORT * arrayIndex);
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
-							nextOff = indexOffset;
+							nextOff = indexOffset - 1;
 							offset += baseSize;
 						} else {
 							currOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
@@ -177,7 +177,7 @@ public class PArrayDataType {
 						offset = indexOffset + (Bytes.SIZEOF_INT * arrayIndex);
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toInt(bytes, offset, baseSize);
-							nextOff = indexOffset;
+							nextOff = indexOffset - 1;
 							offset += baseSize;
 						} else {
 							currOff = Bytes.toInt(bytes, offset, baseSize);
@@ -191,7 +191,7 @@ public class PArrayDataType {
 					break;
 				}
 			} else {
-				ptr.set(bytes, valArrayPostion + initPos, indexOffset - valArrayPostion);
+                ptr.set(bytes, valArrayPostion + initPos, (indexOffset - 1) - valArrayPostion);
 			}
 		} else {
 			ptr.set(bytes,
@@ -248,6 +248,7 @@ public class PArrayDataType {
                 byte[] bytes = array.toBytes(i);
                 buffer.put(bytes);
             }
+            buffer.put((byte)0);
             int offsetArrayPosition = buffer.position();
             buffer.put(offsetArray.array());
             buffer.putInt(offsetArrayPosition);
@@ -332,12 +333,12 @@ public class PArrayDataType {
 					}
 				}
 				buffer.position(nextOff + initPos);
-				byte[] val = new byte[indexOffset - nextOff];
+				byte[] val = new byte[(indexOffset - 1) - nextOff];
 				buffer.get(val);
 				elements[i++] = baseDataType.toObject(val, sortOrder);
 			} else {
 			    buffer.position(initPos);
-				byte[] val = new byte[indexOffset - valArrayPostion];
+				byte[] val = new byte[(indexOffset - 1) - valArrayPostion];
 				buffer.position(valArrayPostion + initPos);
 				buffer.get(val);
 				elements[i++] = baseDataType.toObject(val, sortOrder);
@@ -385,7 +386,8 @@ public class PArrayDataType {
         if(baseType.isFixedWidth()) {
             return baseType.getByteSize() * size;
         } else {
-            return 0;
+            // Treat the offsets to be greater than to fit into Shorts
+            return size * Bytes.SIZEOF_INT;
         }
         
     }
