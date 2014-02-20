@@ -26,6 +26,7 @@ import java.sql.Timestamp;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class PDataTypeForArraysTest {
@@ -144,6 +145,29 @@ public class PDataTypeForArraysTest {
 		byte[] res = new byte[length];
 		System.arraycopy(bs, offset, res, 0, length);
 		assertEquals("ranzzz", Bytes.toString(res));
+	}
+	
+	@Ignore
+	public void testVariableLengthArrayWithElementsMoreThanShortMax() {
+	    String[] strArr = new String[(2 * Short.MAX_VALUE) + 100]; 
+	    for(int i = 0 ; i < (2 * Short.MAX_VALUE) + 100; i++ ) {
+	        String str = "abc";
+	        for(int j = 0 ; j <= i ;j++) {
+	            str += "-";
+	        }
+	        strArr[i] = str;
+	    }
+	    PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
+                PDataType.VARCHAR, strArr);
+        byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
+        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR);
+        int offset = ptr.getOffset();
+        int length = ptr.getLength();
+        byte[] bs = ptr.get();
+        byte[] res = new byte[length];
+        System.arraycopy(bs, offset, res, 0, length);
+        assertEquals("abc---", Bytes.toString(res));
 	}
 	
 	@Test

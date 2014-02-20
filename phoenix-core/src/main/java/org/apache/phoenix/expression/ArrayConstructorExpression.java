@@ -18,7 +18,6 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.schema.PArrayDataType;
 import org.apache.phoenix.schema.PDataType;
@@ -35,20 +34,17 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
     private TrustedByteArrayOutputStream byteStream = null;
     private DataOutputStream oStream = null;
     private int estimatedSize = 0;
-    private byte[] offsetArr;
+    // store the offset postion in this.  Later based on the total size move this to a byte[]
+    // and serialize into byte stream
+    private int[] offsetPos;
 
     public ArrayConstructorExpression(List<Expression> children, PDataType baseType) {
         super(children);
         init(baseType);
         estimatedSize = PArrayDataType.estimateSize(this.children.size(), this.baseType);
-        if (!this.baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
-            offsetArr = new byte[estimatedSize];
-            estimatedSize = estimatedSize + (2 * Bytes.SIZEOF_BYTE) + (2 * Bytes.SIZEOF_INT);
-        } else {
-            estimatedSize = estimatedSize + Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT;
+        if (!this.baseType.isFixedWidth()) {
+            offsetPos = new int[estimatedSize];
         }
-        byteStream = new TrustedByteArrayOutputStream(estimatedSize);
-        oStream = new DataOutputStream(byteStream);
     }
 
     private void init(PDataType baseType) {
@@ -73,7 +69,10 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
         try {
             int offset = 0;
             // track the elementlength for variable array
+            int noOfElements =  children.size();
             int elementLength = 0;
+            byteStream = new TrustedByteArrayOutputStream(estimatedSize);
+            oStream = new DataOutputStream(byteStream);
             for (int i = position >= 0 ? position : 0; i < elements.length; i++) {
                 Expression child = children.get(i);
                 if (!child.evaluate(tuple, ptr)) {
@@ -83,33 +82,21 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
                     }
                 } else {
                     // track the offset position here from the size of the byteStream
-                    if (!baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
-                        Bytes.putInt(offsetArr, offset, (byteStream.size()));
-                        offset += Bytes.SIZEOF_INT;
+                    if (!baseType.isFixedWidth()) {
+                        offset = byteStream.size();
+                        offsetPos[i] = offset;
                         elementLength += ptr.getLength();
                     }
-                    if (!child.isStateless()) {
-                        oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
-                    } else {
-                        oStream.write(ptr.get());
-                    }
+                    oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
                 }
             }
             if (position >= 0) position = elements.length;
-            if (!baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
-                oStream.writeByte(0);
-                int offsetPosition = (byteStream.size());
-                oStream.write(offsetArr);
-                oStream.writeInt(offsetPosition);
+            if (!baseType.isFixedWidth()) {
+                noOfElements = PArrayDataType.serailizeOffsetArrayIntoStream(oStream, byteStream, noOfElements,
+                        elementLength, offsetPos);
             }
-            // No of elements - writing it as negative as we treat the array not to fit in Short size
-            oStream.writeInt(-(children.size()));
-            // Version of the array
-            oStream.write(PArrayDataType.ARRAY_SERIALIZATION_VERSION);
-            // For variable length arrays setting this way would mean that we discard the additional 0 bytes in the
-            // array
-            // that gets created because we don't know the exact size. For fixed length array elementLength = 0
-            ptr.set(byteStream.getBuffer(), 0, estimatedSize + elementLength);
+            PArrayDataType.serializeHeaderInfoIntoStream(oStream, noOfElements);
+            ptr.set(byteStream.getBuffer(), 0, byteStream.size());
             return true;
         } catch (IOException e) {
             throw new RuntimeException("Exception while serializing the byte array");
@@ -122,6 +109,7 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
             }
         }
     }
+
 
     @Override
     public void readFields(DataInput input) throws IOException {

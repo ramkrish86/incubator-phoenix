@@ -17,19 +17,21 @@
  */
 package org.apache.phoenix.schema;
 
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.sql.Types;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.TrustedByteArrayOutputStream;
 
 /**
  * The datatype for PColummns that are Arrays
  */
 public class PArrayDataType {
 
-    private static final int MAX_POSSIBLE_VINT_LENGTH = 2;
     public static final byte ARRAY_SERIALIZATION_VERSION = 1;
 	public PArrayDataType() {
 	}
@@ -48,7 +50,7 @@ public class PArrayDataType {
         int capacity = 0;
 		if (!baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
 			// variable
-			if (calculateMaxOffset(size)) {
+			if (useShortForOffsetArray(size)) {
 				// Use Short to represent the offset
 				capacity = initOffsetArray(noOfElements, Bytes.SIZEOF_SHORT);
 			} else {
@@ -56,8 +58,8 @@ public class PArrayDataType {
 				// Negate the number of elements
 				noOfElements = -noOfElements;
 			}
-			// Here the int for noofelements, byte for the version, int for the offsetarray position and one byte for a null byte
-			buffer = ByteBuffer.allocate(size + capacity + Bytes.SIZEOF_INT+ 2 * Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT);
+			// Here the int for noofelements, byte for the version, int for the offsetarray position
+			buffer = ByteBuffer.allocate(size + capacity + Bytes.SIZEOF_INT+ Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT);
 		} else {
 		    // Here the int for noofelements, byte for the version
 			buffer = ByteBuffer.allocate(size + Bytes.SIZEOF_INT+ Bytes.SIZEOF_BYTE);
@@ -65,11 +67,12 @@ public class PArrayDataType {
 		return bytesFromByteBuffer((PhoenixArray)object, buffer, noOfElements, baseType, capacity);
 	}
 
-	private boolean calculateMaxOffset(int size) {
-		// If the total size + Offset postion ptr + Numelements in Vint is less than Short
-		if ((size + Bytes.SIZEOF_INT + MAX_POSSIBLE_VINT_LENGTH) <= (2 * Short.MAX_VALUE)) {
+	public static boolean useShortForOffsetArray(int size) {
+		// If the total size is less than Short.MAX_VALUE then offset array can use short
+		if (size <= (2 * Short.MAX_VALUE)) {
 			return true;
 		}
+		// else offset array can use Int
 		return false;
 	}
 
@@ -164,7 +167,7 @@ public class PArrayDataType {
 						offset = indexOffset + (Bytes.SIZEOF_SHORT * arrayIndex);
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
-							nextOff = indexOffset - 1;
+							nextOff = indexOffset;
 							offset += baseSize;
 						} else {
 							currOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
@@ -177,7 +180,7 @@ public class PArrayDataType {
 						offset = indexOffset + (Bytes.SIZEOF_INT * arrayIndex);
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toInt(bytes, offset, baseSize);
-							nextOff = indexOffset - 1;
+							nextOff = indexOffset;
 							offset += baseSize;
 						} else {
 							currOff = Bytes.toInt(bytes, offset, baseSize);
@@ -191,7 +194,7 @@ public class PArrayDataType {
 					break;
 				}
 			} else {
-                ptr.set(bytes, valArrayPostion + initPos, (indexOffset - 1) - valArrayPostion);
+                ptr.set(bytes, valArrayPostion + initPos, (indexOffset - valArrayPostion));
 			}
 		} else {
 			ptr.set(bytes,
@@ -231,16 +234,16 @@ public class PArrayDataType {
 	 */
 	private byte[] bytesFromByteBuffer(PhoenixArray array, ByteBuffer buffer,
 			int noOfElements, PDataType baseType, int capacity) {
-		int temp = noOfElements;
         if (buffer == null) return null;
         if (!baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
+            int tempNoOfElements = noOfElements;
             ByteBuffer offsetArray = ByteBuffer.allocate(capacity);
-            if(noOfElements < 0){
-            	noOfElements = -noOfElements;
+            if(tempNoOfElements < 0){
+                tempNoOfElements = -tempNoOfElements;
             }
-            for (int i = 0; i < noOfElements; i++) {
+            for (int i = 0; i < tempNoOfElements; i++) {
                 // Not fixed width
-				if (temp < 0) {
+				if (noOfElements < 0) {
 					offsetArray.putInt(buffer.position());
 				} else {
 					offsetArray.putShort((short)(buffer.position() - Short.MAX_VALUE));
@@ -248,7 +251,6 @@ public class PArrayDataType {
                 byte[] bytes = array.toBytes(i);
                 buffer.put(bytes);
             }
-            buffer.put((byte)0);
             int offsetArrayPosition = buffer.position();
             buffer.put(offsetArray.array());
             buffer.putInt(offsetArrayPosition);
@@ -258,12 +260,59 @@ public class PArrayDataType {
                 buffer.put(bytes);
             }
         }
-        buffer.putInt(noOfElements);
-        buffer.put(ARRAY_SERIALIZATION_VERSION);
+        serializeHeaderInfoIntoBuffer(buffer, noOfElements);
         return buffer.array();
 	}
 
-	private static int initOffsetArray(int noOfElements, int baseSize) {
+    public static int serailizeOffsetArrayIntoStream(DataOutputStream oStream, TrustedByteArrayOutputStream byteStream,
+            int noOfElements, int elementLength, int[] offsetPos) throws IOException {
+        int offsetPosition = (byteStream.size());
+        byte[] offsetArr = null;
+        int incr = 0;
+        boolean useInt = true;
+        if (PArrayDataType.useShortForOffsetArray(elementLength)) {
+            offsetArr = new byte[PArrayDataType.initOffsetArray(noOfElements, Bytes.SIZEOF_SHORT)];
+            incr = Bytes.SIZEOF_SHORT;
+            useInt = false;
+        } else {
+            offsetArr = new byte[PArrayDataType.initOffsetArray(noOfElements, Bytes.SIZEOF_INT)];
+            incr = Bytes.SIZEOF_INT;
+            noOfElements = -noOfElements;
+        }
+        int off = 0;
+        off = fillOffsetArr(offsetPos, offsetArr, incr, off, useInt);
+        oStream.write(offsetArr);
+        oStream.writeInt(offsetPosition);
+        return noOfElements;
+    }
+
+    private static int fillOffsetArr(int[] offsetPos, byte[] offsetArr, int incr, int off, boolean useInt) {
+        for (int pos : offsetPos) {
+            if (useInt) {
+                Bytes.putInt(offsetArr, off, pos);
+            } else {
+                Bytes.putShort(offsetArr, off, (short)(pos - Short.MAX_VALUE));
+            }
+            off += incr;
+        }
+        return off;
+    }
+
+    public static void serializeHeaderInfoIntoBuffer(ByteBuffer buffer, int noOfElements) {
+        // No of elements
+        buffer.putInt(noOfElements);
+        // Version of the array
+        buffer.put(ARRAY_SERIALIZATION_VERSION);
+    }
+
+    public static void serializeHeaderInfoIntoStream(DataOutputStream oStream, int noOfElements) throws IOException {
+        // No of elements
+        oStream.writeInt(noOfElements);
+        // Version of the array
+        oStream.write(ARRAY_SERIALIZATION_VERSION);
+    }
+
+	public static int initOffsetArray(int noOfElements, int baseSize) {
 		// for now create an offset array equal to the noofelements
 		return noOfElements * baseSize;
     }
@@ -333,12 +382,12 @@ public class PArrayDataType {
 					}
 				}
 				buffer.position(nextOff + initPos);
-				byte[] val = new byte[(indexOffset - 1) - nextOff];
+				byte[] val = new byte[(indexOffset) - nextOff];
 				buffer.get(val);
 				elements[i++] = baseDataType.toObject(val, sortOrder);
 			} else {
 			    buffer.position(initPos);
-				byte[] val = new byte[(indexOffset - 1) - valArrayPostion];
+				byte[] val = new byte[(indexOffset) - valArrayPostion];
 				buffer.position(valArrayPostion + initPos);
 				buffer.get(val);
 				elements[i++] = baseDataType.toObject(val, sortOrder);
@@ -386,8 +435,7 @@ public class PArrayDataType {
         if(baseType.isFixedWidth()) {
             return baseType.getByteSize() * size;
         } else {
-            // Treat the offsets to be greater than to fit into Shorts
-            return size * Bytes.SIZEOF_INT;
+            return size;
         }
         
     }
