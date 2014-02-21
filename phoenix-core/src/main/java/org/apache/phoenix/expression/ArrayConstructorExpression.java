@@ -19,6 +19,7 @@ import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.io.WritableUtils;
+import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.PArrayDataType;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.tuple.Tuple;
@@ -71,6 +72,7 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
             // track the elementlength for variable array
             int noOfElements =  children.size();
             int elementLength = 0;
+            int nNulls = 0;
             byteStream = new TrustedByteArrayOutputStream(estimatedSize);
             oStream = new DataOutputStream(byteStream);
             for (int i = position >= 0 ? position : 0; i < elements.length; i++) {
@@ -86,12 +88,22 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
                         offset = byteStream.size();
                         offsetPos[i] = offset;
                         elementLength += ptr.getLength();
+                        if (ptr.getLength() == 0) {
+                            nNulls++;
+                        } else {
+                            PArrayDataType.serializeNulls(oStream, nNulls);
+                            oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
+                            oStream.write(QueryConstants.SEPARATOR_BYTE);
+                        }
+                    } else { // No nulls for fixed length
+                        oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
                     }
-                    oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
                 }
             }
             if (position >= 0) position = elements.length;
             if (!baseType.isFixedWidth()) {
+             // Write out double separator byte here to ensure comparability (might want a bigger comment with an example here)
+                PArrayDataType.writeEndSeperatorForVarLengthArray(oStream);
                 noOfElements = PArrayDataType.serailizeOffsetArrayIntoStream(oStream, byteStream, noOfElements,
                         elementLength, offsetPos);
             }

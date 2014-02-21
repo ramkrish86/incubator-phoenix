@@ -146,6 +146,14 @@ public class PhoenixArray implements Array,SQLCloseable {
 		return this.baseType.toBytes(((Object[])array)[pos]);
 	}
 	
+	public boolean isNull(int pos) {
+	    if(this.baseType.toBytes(((Object[])array)[pos]).length == 0) {
+	        return true;
+	    } else {
+	        return false;
+	    }
+	}
+	
 	@Override
 	public boolean equals(Object obj) {
 		if (this.numElements != ((PhoenixArray) obj).numElements) {

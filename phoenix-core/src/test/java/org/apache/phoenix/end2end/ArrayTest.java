@@ -429,7 +429,7 @@ public class ArrayTest extends BaseClientManagedTimeTest {
         String tenantId = getOrganizationId();
         createTableWithArray(BaseConnectedQueryTest.getUrl(), getDefaultSplits(tenantId), null, ts - 2);
         initTablesWithArrays(tenantId, null, ts, false);
-        String query = "SELECT b_string,ARRAY['abc',null,b_string] FROM table_with_array where organization_id =  '"
+        String query = "SELECT b_string,ARRAY['abc',null,'bcd',null,null,b_string] FROM table_with_array where organization_id =  '"
                 + tenantId + "'";
         Properties props = new Properties(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
@@ -442,10 +442,13 @@ public class ArrayTest extends BaseClientManagedTimeTest {
             assertEquals(val, "b");
             Array array = rs.getArray(2);
             // Need to support primitive
-            String[] strArr = new String[3];
+            String[] strArr = new String[6];
             strArr[0] = "abc";
             strArr[1] = null;
-            strArr[2] = "b";
+            strArr[2] = "bcd";
+            strArr[3] = null;
+            strArr[4] = null;
+            strArr[5] = "b";
             Array resultArr = conn.createArrayOf("VARCHAR", strArr);
             assertEquals(resultArr, array);
             assertFalse(rs.next());
@@ -453,6 +456,8 @@ public class ArrayTest extends BaseClientManagedTimeTest {
             conn.close();
         }
     }
+    
+    // TODO : Add a test with trailing null.. Still trailing null logic not written in ArrayConstructorExpression.evaluate.
     
     @Test
     public void testUpsertSelectWithColumnRef() throws Exception {
