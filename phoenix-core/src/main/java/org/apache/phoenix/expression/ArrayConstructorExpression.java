@@ -73,6 +73,7 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
             int noOfElements =  children.size();
             int elementLength = 0;
             int nNulls = 0;
+            int nullsCount = 0;
             byteStream = new TrustedByteArrayOutputStream(estimatedSize);
             oStream = new DataOutputStream(byteStream);
             for (int i = position >= 0 ? position : 0; i < elements.length; i++) {
@@ -85,11 +86,23 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
                 } else {
                     // track the offset position here from the size of the byteStream
                     if (!baseType.isFixedWidth()) {
+                        // Any variable length array would follow the below order
+                        // Every element would be seperated by a seperator byte '0'
+                        // Null elements are counted and once a first non null element appears we
+                        // write the count of the nulls prefixed with a seperator byte
+                        // Trailing nulls are not taken into account
+                        // The last non null element is followed by two seperator bytes
+                        // For eg
+                        // a, b, null, null, c, null would be 
+                        // 65 0 66 0 0 2 67 0 0 0
+                        // a null null null b c null d would be
+                        // 65 0 0 3 66 0 67 0 0 1 68 0 0 0
                         offset = byteStream.size();
                         offsetPos[i] = offset;
                         elementLength += ptr.getLength();
                         if (ptr.getLength() == 0) {
                             nNulls++;
+                            nullsCount++;
                         } else {
                             PArrayDataType.serializeNulls(oStream, nNulls);
                             oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
@@ -102,11 +115,13 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
             }
             if (position >= 0) position = elements.length;
             if (!baseType.isFixedWidth()) {
-             // Write out double separator byte here to ensure comparability (might want a bigger comment with an example here)
+                // Double seperator byte to show end of the non null array
                 PArrayDataType.writeEndSeperatorForVarLengthArray(oStream);
                 noOfElements = PArrayDataType.serailizeOffsetArrayIntoStream(oStream, byteStream, noOfElements,
                         elementLength, offsetPos);
             }
+            // Write the count of non null elements
+            oStream.writeInt(noOfElements - nullsCount); 
             PArrayDataType.serializeHeaderInfoIntoStream(oStream, noOfElements);
             ptr.set(byteStream.getBuffer(), 0, byteStream.size());
             return true;

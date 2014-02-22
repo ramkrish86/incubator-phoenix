@@ -42,41 +42,49 @@ public class PArrayDataType {
 		if(object == null) {
 			throw new ConstraintViolationException(this + " may not be null");
 		}
-		Pair<Integer, Pair<Integer,Integer>> nullsVsNullRepeationCounter = new Pair<Integer, Pair<Integer, Integer>>();
+		Pair<Integer, Integer> nullsVsNullRepeationCounter = new Pair<Integer, Integer>();
         int size = estimateByteSize(object, nullsVsNullRepeationCounter,
                 PDataType.fromTypeId((baseType.getSqlType() + Types.ARRAY)));
         int noOfElements = ((PhoenixArray)object).numElements;
         if(noOfElements == 0) {
         	return ByteUtil.EMPTY_BYTE_ARRAY;
         }
-        int trailingNulls = nullsVsNullRepeationCounter.getSecond().getSecond();
         ByteBuffer buffer;
         int capacity = 0;
 		if (!baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
+            // Any variable length array would follow the below order
+            // Every element would be seperated by a seperator byte '0'
+            // Null elements are counted and once a first non null element appears we
+            // write the count of the nulls prefixed with a seperator byte
+            // Trailing nulls are not taken into account
+            // The last non null element is followed by two seperator bytes
+            // For eg
+            // a, b, null, null, c, null would be 
+            // 65 0 66 0 0 2 67 0 0 0
+            // a null null null b c null d would be
+            // 65 0 0 3 66 0 67 0 0 1 68 0 0 0
 			// variable
 			if (useShortForOffsetArray(size)) {
 				// Use Short to represent the offset
-				capacity = initOffsetArray(noOfElements - trailingNulls, Bytes.SIZEOF_SHORT);
+				capacity = initOffsetArray(noOfElements, Bytes.SIZEOF_SHORT);
 			} else {
-				capacity = initOffsetArray(noOfElements - trailingNulls, Bytes.SIZEOF_INT);
+				capacity = initOffsetArray(noOfElements, Bytes.SIZEOF_INT);
 				// Negate the number of elements
 				noOfElements = -noOfElements;
 			}
 			// 2 bytes for the end double seperator + non null value byte separtor + 2 bytes for denoting the count of
 			// successive null bytes prefixed with a seperator byte
-			// So if there is an array
-			// a b c null null d - 65 0 66 0 67 0 0 2 68 0 0 0
-
             size += ((2 * Bytes.SIZEOF_BYTE) + (noOfElements - nullsVsNullRepeationCounter.getFirst()) * Bytes.SIZEOF_BYTE)
-                    + (nullsVsNullRepeationCounter.getSecond().getFirst() * 2 * Bytes.SIZEOF_BYTE);
+                    + (nullsVsNullRepeationCounter.getSecond() * 2 * Bytes.SIZEOF_BYTE);
 
-			// Here the int for noofelements, byte for the version, int for the offsetarray position, trailing nulls
-            buffer = ByteBuffer.allocate(size + capacity + Bytes.SIZEOF_INT + Bytes.SIZEOF_BYTE + 2 * Bytes.SIZEOF_INT );
+            // Here the int for noofelements, byte for the version, int for the offsetarray position, int for number of
+            // not null values
+            buffer = ByteBuffer.allocate(size + capacity + Bytes.SIZEOF_INT + Bytes.SIZEOF_BYTE +  2 * Bytes.SIZEOF_INT );
 		} else {
 		    // Here the int for noofelements, byte for the version, trailing nulls
-			buffer = ByteBuffer.allocate(size + Bytes.SIZEOF_INT+ Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT);
+			buffer = ByteBuffer.allocate(size + Bytes.SIZEOF_INT+ Bytes.SIZEOF_BYTE );
 		}
-		return bytesFromByteBuffer((PhoenixArray)object, buffer, noOfElements, baseType, capacity, trailingNulls);
+		return bytesFromByteBuffer((PhoenixArray)object, buffer, noOfElements, baseType, capacity);
 	}
 
     public static int serializeNulls(DataOutputStream oStream, int nulls) throws IOException {
@@ -125,7 +133,8 @@ public class PArrayDataType {
         return estimateByteSize(object, null, PDataType.fromTypeId((array.baseType.getSqlType() + Types.ARRAY)));
 	}
 
-    public int estimateByteSize(Object o, Pair<Integer, Pair<Integer,Integer>> nullsVsNullRepeationCounter, PDataType baseType) {
+	// Estimates the size of the given array and also calculates the number of nulls and its repetition factor
+    public int estimateByteSize(Object o, Pair<Integer, Integer> nullsVsNullRepeationCounter, PDataType baseType) {
         if (baseType.isFixedWidth()) { return baseType.getByteSize(); }
         if (baseType.isArrayType()) {
             PhoenixArray array = (PhoenixArray)o;
@@ -134,7 +143,6 @@ public class PArrayDataType {
             int nullsRepeationCounter = 0;
             int nulls = 0;
             int totalNulls = 0;
-            int trailingNulls = 0;
             for (int i = 0; i < noOfElements; i++) {
                 totalVarSize += array.estimateByteSize(i);
                 if (!PDataType.fromTypeId((baseType.getSqlType() - Types.ARRAY)).isFixedWidth()) {
@@ -152,14 +160,10 @@ public class PArrayDataType {
             if (nullsVsNullRepeationCounter != null) {
                 if (nulls > 0) {
                     totalNulls += nulls;
-                    trailingNulls = nulls;
                     // do not increment nullsRepeationCounter to identify trailing nulls
                 }
                 nullsVsNullRepeationCounter.setFirst(totalNulls);
-                Pair<Integer, Integer> innerPair = new Pair<Integer, Integer>();
-                innerPair.setFirst(nullsRepeationCounter);
-                innerPair.setSecond(trailingNulls);
-                nullsVsNullRepeationCounter.setSecond(innerPair);
+                nullsVsNullRepeationCounter.setSecond(nullsRepeationCounter);
             }
             return totalVarSize;
         }
@@ -216,8 +220,6 @@ public class PArrayDataType {
 		int initPos = ptr.getOffset();
 		int noOfElements = 0;
 		noOfElements = Bytes.toInt(bytes, (ptr.getOffset() + ptr.getLength() - ( Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT)), Bytes.SIZEOF_INT);
-		int trailingNulls = 0;
-		trailingNulls = Bytes.toInt(bytes, (ptr.getOffset() + ptr.getLength() - (Bytes.SIZEOF_BYTE + 2 * Bytes.SIZEOF_INT)), Bytes.SIZEOF_INT);
 		
 		if(arrayIndex >= noOfElements) {
 			throw new IndexOutOfBoundsException(
@@ -225,10 +227,6 @@ public class PArrayDataType {
 							+ arrayIndex
 							+ " specified, greater than the no of eloements in the array: "
 							+ noOfElements);
-		}
-		if(arrayIndex >= (noOfElements - trailingNulls)) {
-		    ptr.set(ByteUtil.EMPTY_BYTE_ARRAY);
-		    return;
 		}
 		boolean useShort = true;
 		int baseSize = Bytes.SIZEOF_SHORT;
@@ -240,11 +238,16 @@ public class PArrayDataType {
 
 		if (baseDataType.getByteSize() == null) {
 		    int offset = ptr.getOffset();
+		    int noOfNotNulls = Bytes.toInt(bytes,
+                    (ptr.getOffset() + ptr.getLength() - (Bytes.SIZEOF_BYTE + 2 * Bytes.SIZEOF_INT))) + ptr.getOffset();
             int indexOffset = Bytes.toInt(bytes,
                     (ptr.getOffset() + ptr.getLength() - (Bytes.SIZEOF_BYTE + 3 * Bytes.SIZEOF_INT))) + ptr.getOffset();
 		    int valArrayPostion = offset;
 			int currOff = 0;
-			if (noOfElements - trailingNulls > 1) {
+			// Need to track incase the previous element would have been null
+			int prevOff = 0;
+			int seperatorByteOffset = indexOffset - 2;
+			if (noOfElements > 1) {
 				while (offset <= (initPos+ptr.getLength())) {
 					int nextOff = 0;
 					// Skip those many offsets as given in the arrayIndex
@@ -253,9 +256,20 @@ public class PArrayDataType {
 					// So inorder to know the length of the 4th element we will read the offset of 4th element and the offset of 5th element.
 					// Subtracting the offset of 5th element and 4th element will give the length of 4th element
 					// So we could just skip reading the other elements.
+					
 					if(useShort) {
 						// If the arrayIndex is already the last element then read the last before one element and the last element
 						offset = indexOffset + (Bytes.SIZEOF_SHORT * arrayIndex);
+						if(noOfNotNulls != noOfElements) {
+						    // Null is found. Always read 3 indexes then to know if the previous element was
+						    // null or not.  Without this we would not be able to say if the previous offset
+						    // was the 2 bytes representing the null count
+						    // For eg : My offset array says
+						    // 0 4 7 17 17 21.
+						    // This would mean that the 4th element was null and 5 th element was non null 
+						    int prevoffsetPos = indexOffset + (Bytes.SIZEOF_SHORT * (arrayIndex - 1));
+						    prevOff = Bytes.toShort(bytes, prevoffsetPos, baseSize) + Short.MAX_VALUE;
+						}
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
 							nextOff = indexOffset;
@@ -269,6 +283,12 @@ public class PArrayDataType {
 					} else {
 						// If the arrayIndex is already the last element then read the last before one element and the last element
 						offset = indexOffset + (Bytes.SIZEOF_INT * arrayIndex);
+                        if (noOfNotNulls != noOfElements) {
+                            // Null is found. Always read 3 indexes then to know if the previous element was
+                            // null or not
+                            int prevoffsetPos = indexOffset + (Bytes.SIZEOF_INT * (arrayIndex - 1));
+                            prevOff = Bytes.toInt(bytes, prevoffsetPos, baseSize);
+                        }
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toInt(bytes, offset, baseSize);
 							nextOff = indexOffset;
@@ -280,10 +300,23 @@ public class PArrayDataType {
 							offset += baseSize;
 						}
 					}
+					boolean prevElemetIsNull = currOff == prevOff;
+                    if(prevElemetIsNull) {
+					    // Means a null element was found in the previous element. so the curroff has to be adjusted
+					    // by 2 bytes
+					    currOff += 2;
+					}
 					int elementLength = nextOff - currOff;
 					if(elementLength == 0) {
 					    // Means a null element
 					    ptr.set(bytes, currOff + initPos, elementLength);
+					    break;
+					}
+					if(seperatorByteOffset == currOff) {
+					    // We are retrieving a null element that is at last. 
+					    // We are sure that we have read only 2 bytes and that is the end offset
+					    ptr.set(bytes, currOff + initPos, 0);
+                        break;
 					}
 					if(currOff + initPos + elementLength == indexOffset) {
 					    // Subtract 3 bytes - 1 for the seperator for the element and the 2 sepeator bytes at the end
@@ -336,7 +369,7 @@ public class PArrayDataType {
 	 * @return
 	 */
 	private byte[] bytesFromByteBuffer(PhoenixArray array, ByteBuffer buffer,
-			int noOfElements, PDataType baseType, int capacity, int trailingNulls) {
+			int noOfElements, PDataType baseType, int capacity) {
         if (buffer == null) return null;
         if (!baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
             int tempNoOfElements = noOfElements;
@@ -345,32 +378,32 @@ public class PArrayDataType {
                 tempNoOfElements = -tempNoOfElements;
             }
             int nulls = 0;
-            for (int i = 0; i < tempNoOfElements - trailingNulls; i++) {
+            int nullCount = 0;
+            for (int i = 0; i < tempNoOfElements; i++) {
                 byte[] bytes = array.toBytes(i);
                 markOffset(buffer, noOfElements, offsetArray);
                 if(bytes.length == 0){
                    nulls++;
+                   nullCount++;
                 } else {
                     nulls = serializeNullsIntoBuffer(buffer, nulls);
                     buffer.put(bytes);
                     buffer.put(QueryConstants.SEPARATOR_BYTE);
                 }
             }
-            if(nulls > 0) {
-                nulls = serializeNullsIntoBuffer(buffer, nulls);
-            }
             buffer.put(QueryConstants.SEPARATOR_BYTE);
             buffer.put(QueryConstants.SEPARATOR_BYTE);
             int offsetArrayPosition = buffer.position();
             buffer.put(offsetArray.array());
             buffer.putInt(offsetArrayPosition);
+            buffer.putInt(tempNoOfElements - nullCount);
         } else {
             for (int i = 0; i < noOfElements; i++) {
                 byte[] bytes = array.toBytes(i);
                 buffer.put(bytes);
             }
         }
-        serializeHeaderInfoIntoBuffer(buffer, noOfElements, trailingNulls);
+        serializeHeaderInfoIntoBuffer(buffer, noOfElements);
         return buffer.array();
 	}
 
@@ -416,9 +449,7 @@ public class PArrayDataType {
         return off;
     }
 
-    public static void serializeHeaderInfoIntoBuffer(ByteBuffer buffer, int noOfElements, int trailingNulls) {
-        // No of trailing nulls
-        buffer.putInt(trailingNulls);
+    public static void serializeHeaderInfoIntoBuffer(ByteBuffer buffer, int noOfElements) {
         // No of elements
         buffer.putInt(noOfElements);
         // Version of the array
@@ -426,9 +457,6 @@ public class PArrayDataType {
     }
 
     public static void serializeHeaderInfoIntoStream(DataOutputStream oStream, int noOfElements) throws IOException {
-        // No of trailing nulls
-        // TODO
-        oStream.writeInt(0);
         // No of elements
         oStream.writeInt(noOfElements);
         // Version of the array
@@ -440,6 +468,18 @@ public class PArrayDataType {
 		return noOfElements * baseSize;
     }
 
+    // Any variable length array would follow the below order
+    // Every element would be seperated by a seperator byte '0'
+    // Null elements are counted and once a first non null element appears we
+    // write the count of the nulls prefixed with a seperator byte
+    // Trailing nulls are not taken into account
+    // The last non null element is followed by two seperator bytes
+    // For eg
+    // a, b, null, null, c, null would be 
+    // 65 0 66 0 0 2 67 0 0 0
+    // a null null null b c null d would be
+    // 65 0 0 3 66 0 67 0 0 1 68 0 0 0
+	// Follow the above example to understand how this works
 	private Object createPhoenixArray(byte[] bytes, int offset, int length,
 			SortOrder sortOrder, PDataType baseDataType) {
 		if(bytes == null || bytes.length == 0) {
@@ -449,8 +489,6 @@ public class PArrayDataType {
 		int initPos = buffer.position();
 		buffer.position((buffer.limit() - (Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT)));
 		int noOfElements = buffer.getInt();
-        buffer.position((buffer.limit() - (Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT + Bytes.SIZEOF_INT)));
-		int trailingNulls = buffer.getInt();
 		boolean useShort = true;
 		int baseSize = Bytes.SIZEOF_SHORT;
 		if(noOfElements < 0) {
@@ -461,22 +499,25 @@ public class PArrayDataType {
 		Object[] elements = (Object[]) java.lang.reflect.Array.newInstance(
 				baseDataType.getJavaClass(), noOfElements);
         if (!baseDataType.isFixedWidth() || baseDataType.isCoercibleTo(PDataType.VARCHAR)) {
+            buffer.position(buffer.limit() - (Bytes.SIZEOF_BYTE + (2 * Bytes.SIZEOF_INT)));
+            int noOfNonNulls = buffer.getInt();
             buffer.position(buffer.limit() - (Bytes.SIZEOF_BYTE + (3 * Bytes.SIZEOF_INT)));
             int indexOffset = buffer.getInt();
             buffer.position(initPos);
             int valArrayPostion = buffer.position();
             buffer.position(indexOffset + initPos);
-            ByteBuffer indexArr = ByteBuffer.allocate(initOffsetArray(noOfElements - trailingNulls, baseSize));
+            ByteBuffer indexArr = ByteBuffer.allocate(initOffsetArray(noOfElements, baseSize));
             byte[] array = indexArr.array();
             buffer.get(array);
             int countOfElementsRead = 0;
             int i = 0;
             int currOff = -1;
             int nextOff = -1;
+            int nonNullCount = 0;
             boolean foundNull = false;
-            if (noOfElements - trailingNulls > 1) {
+            if (noOfElements > 1) {
                 while (indexArr.hasRemaining()) {
-                    if (countOfElementsRead < (noOfElements - trailingNulls)) {
+                    if (countOfElementsRead < (noOfElements)) {
                         if (currOff == -1) {
                             if ((indexArr.position() + 2 * baseSize) <= indexArr.capacity()) {
                                 if (useShort) {
@@ -497,6 +538,8 @@ public class PArrayDataType {
                             }
                             countOfElementsRead += 1;
                         }
+                        // If a non null element appears after a null.
+                        // We would have written the null count prefixed with a seperator
                         if (nextOff != currOff && foundNull) {
                             foundNull = false;
                             currOff += 2;
@@ -513,6 +556,8 @@ public class PArrayDataType {
                         byte[] val = new byte[elementLength - 1];
                         buffer.get(val);
                         elements[i++] = baseDataType.toObject(val, sortOrder);
+                        // Increment if a non null element is found
+                        nonNullCount++;
                     }
                 }
                 // Last before element was null
@@ -520,13 +565,18 @@ public class PArrayDataType {
                     nextOff += 2;
                     foundNull = false;
                 }
-                // Last element was null
+                if(nonNullCount == noOfNonNulls) {
+                    // We have got the required elements.  This would help in cases where
+                    return PArrayDataType.instantiatePhoenixArray(baseDataType, elements);
+                }
                 buffer.position(nextOff + initPos);
                 if (indexOffset - nextOff != 0) {
                     // Remove the seperator of the last element and the last two seperator bytes
                     byte[] val = new byte[(indexOffset - (3 * Bytes.SIZEOF_BYTE)) - nextOff];
                     buffer.get(val);
                     elements[i++] = baseDataType.toObject(val, sortOrder);
+                 // Increment if a non null element is found
+                    nonNullCount++;
                 }
             } else {
                 buffer.position(initPos);
@@ -536,6 +586,7 @@ public class PArrayDataType {
                     buffer.position(valArrayPostion);
                     buffer.get(val);
                     elements[i++] = baseDataType.toObject(val, sortOrder);
+                    nonNullCount++;
                 }
             }
         } else {
