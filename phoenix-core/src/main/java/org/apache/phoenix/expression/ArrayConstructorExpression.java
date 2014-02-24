@@ -22,6 +22,7 @@ import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.PArrayDataType;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.ValueSchema;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.TrustedByteArrayOutputStream;
 
@@ -44,8 +45,12 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
         init(baseType);
         estimatedSize = PArrayDataType.estimateSize(this.children.size(), this.baseType);
         if (!this.baseType.isFixedWidth()) {
-            offsetPos = new int[estimatedSize];
+            offsetPos = new int[children.size()];
+            byteStream = new TrustedByteArrayOutputStream(estimatedSize * ValueSchema.ESTIMATED_VARIABLE_LENGTH_SIZE);
+        } else {
+            byteStream = new TrustedByteArrayOutputStream(estimatedSize);
         }
+            
     }
 
     private void init(PDataType baseType) {
@@ -68,13 +73,8 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
     @Override
     public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
         try {
-            int offset = 0;
-            // track the elementlength for variable array
             int noOfElements =  children.size();
-            int elementLength = 0;
             int nNulls = 0;
-            int nullsCount = 0;
-            byteStream = new TrustedByteArrayOutputStream(estimatedSize);
             oStream = new DataOutputStream(byteStream);
             for (int i = position >= 0 ? position : 0; i < elements.length; i++) {
                 Expression child = children.get(i);
@@ -97,12 +97,9 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
                         // 65 0 66 0 0 2 67 0 0 0
                         // a null null null b c null d would be
                         // 65 0 0 3 66 0 67 0 0 1 68 0 0 0
-                        offset = byteStream.size();
-                        offsetPos[i] = offset;
-                        elementLength += ptr.getLength();
+                        offsetPos[i] = byteStream.size();;
                         if (ptr.getLength() == 0) {
                             nNulls++;
-                            nullsCount++;
                         } else {
                             PArrayDataType.serializeNulls(oStream, nNulls);
                             oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
@@ -118,10 +115,8 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
                 // Double seperator byte to show end of the non null array
                 PArrayDataType.writeEndSeperatorForVarLengthArray(oStream);
                 noOfElements = PArrayDataType.serailizeOffsetArrayIntoStream(oStream, byteStream, noOfElements,
-                        elementLength, offsetPos);
+                        offsetPos[offsetPos.length - 1], offsetPos);
             }
-            // Write the count of non null elements
-            oStream.writeInt(noOfElements - nullsCount); 
             PArrayDataType.serializeHeaderInfoIntoStream(oStream, noOfElements);
             ptr.set(byteStream.getBuffer(), 0, byteStream.size());
             return true;
