@@ -30,14 +30,14 @@ import org.apache.phoenix.util.ByteUtil;
 import org.apache.phoenix.util.TrustedByteArrayOutputStream;
 
 /**
- * The datatype for PColummns that are Arrays. 
- * Any variable length array would follow the below order.
- * Every element would be seperated by a seperator byte '0'. 
- * Null elements are counted and once a first non null element appears we write the
- * count of the nulls prefixed with a seperator byte Trailing nulls are not taken into account. 
- * The last non null element is followed by two seperator bytes. 
- * For eg a, b, null, null, c, null -> 65 0 66 0 0 2 67 0 0 0 
- * a null null null b c null d -> 65 0 0 3 66 0 67 0 0 1 68 0 0 0
+ * The datatype for PColummns that are Arrays. Any variable length array would follow the below order. Every element
+ * would be seperated by a seperator byte '0'. Null elements are counted and once a first non null element appears we
+ * write the count of the nulls prefixed with a seperator byte Trailing nulls are not taken into account. The last non
+ * null element is followed by two seperator bytes. For eg a, b, null, null, c, null -> 65 0 66 0 0 2 67 0 0 0 a null
+ * null null b c null d -> 65 0 0 3 66 0 67 0 0 1 68 0 0 0.
+ * The reason we use this serialization format is to allow the
+ * byte array of arrays of the same type to be directly comparable against each other. This prevents a costly
+ * deserialization on compare and allows an array column to be used as the last column in a primary key constraint.
  */
 public class PArrayDataType {
 
@@ -59,17 +59,6 @@ public class PArrayDataType {
         
         TrustedByteArrayOutputStream byteStream = null;
 		if (!baseType.isFixedWidth() || baseType.isCoercibleTo(PDataType.VARCHAR)) {
-            // Any variable length array would follow the below order
-            // Every element would be seperated by a seperator byte '0'
-            // Null elements are counted and once a first non null element appears we
-            // write the count of the nulls prefixed with a seperator byte
-            // Trailing nulls are not taken into account
-            // The last non null element is followed by two seperator bytes
-            // For eg
-            // a, b, null, null, c, null would be 
-            // 65 0 66 0 0 2 67 0 0 0
-            // a null null null b c null d would be
-            // 65 0 0 3 66 0 67 0 0 1 68 0 0 0
 		    size += ((2 * Bytes.SIZEOF_BYTE) + (noOfElements - nullsVsNullRepeationCounter.getFirst()) * Bytes.SIZEOF_BYTE)
 		                                + (nullsVsNullRepeationCounter.getSecond() * 2 * Bytes.SIZEOF_BYTE);
 		    // Assume an offset array that fit into Short.MAX_VALUE
@@ -242,20 +231,19 @@ public class PArrayDataType {
 						offset = indexOffset + (Bytes.SIZEOF_SHORT * arrayIndex);
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
-							ptr.set(bytes, currOff + initPos, 1);
-							if(ptr.compareTo(QueryConstants.SEPARATOR_BYTE_ARRAY) == 0) {
+							if(bytes[currOff + initPos] == QueryConstants.SEPARATOR_BYTE) {
 							    // null found
 							    currOff+=2;
 							}
+
 							nextOff = indexOffset;
 							offset += baseSize;
 						} else {
 							currOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
-							ptr.set(bytes, currOff + initPos, 1);
 							offset += baseSize;
 							nextOff = Bytes.toShort(bytes, offset, baseSize) + Short.MAX_VALUE;
 							offset += baseSize;
-							if(ptr.compareTo(QueryConstants.SEPARATOR_BYTE_ARRAY) == 0) {
+							if(bytes[currOff + initPos] == QueryConstants.SEPARATOR_BYTE) {
 							    if(nextOff == currOff) {
 							        // null found
 							        ptr.set(bytes, currOff + initPos, 0);
@@ -269,8 +257,7 @@ public class PArrayDataType {
 						offset = indexOffset + (Bytes.SIZEOF_INT * arrayIndex);
 						if (arrayIndex == (noOfElements - 1)) {
 							currOff = Bytes.toInt(bytes, offset, baseSize);
-							ptr.set(bytes, currOff + initPos, 1);
-							if(ptr.compareTo(QueryConstants.SEPARATOR_BYTE_ARRAY) == 0) {
+							if(bytes[currOff + initPos] == QueryConstants.SEPARATOR_BYTE) {
                                 // null found
                                 currOff+=2;
                             }
@@ -278,11 +265,10 @@ public class PArrayDataType {
 							offset += baseSize;
 						} else {
 							currOff = Bytes.toInt(bytes, offset, baseSize);
-							ptr.set(bytes, currOff + initPos, 1);
 							offset += baseSize;
 							nextOff = Bytes.toInt(bytes, offset, baseSize);
 							offset += baseSize;
-                            if (ptr.compareTo(QueryConstants.SEPARATOR_BYTE_ARRAY) == 0) {
+							if(bytes[currOff + initPos] == QueryConstants.SEPARATOR_BYTE) {
                                 if (nextOff == currOff) {
                                     // null found
                                     ptr.set(bytes, currOff + initPos, 0);
@@ -588,7 +574,7 @@ public class PArrayDataType {
         if(baseType.isFixedWidth()) {
             return baseType.getByteSize() * size;
         } else {
-            return size;
+            return size * ValueSchema.ESTIMATED_VARIABLE_LENGTH_SIZE;
         }
         
     }

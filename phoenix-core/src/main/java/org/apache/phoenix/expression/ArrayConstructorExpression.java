@@ -22,7 +22,6 @@ import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.PArrayDataType;
 import org.apache.phoenix.schema.PDataType;
-import org.apache.phoenix.schema.ValueSchema;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.TrustedByteArrayOutputStream;
 
@@ -46,7 +45,7 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
         estimatedSize = PArrayDataType.estimateSize(this.children.size(), this.baseType);
         if (!this.baseType.isFixedWidth()) {
             offsetPos = new int[children.size()];
-            byteStream = new TrustedByteArrayOutputStream(estimatedSize * ValueSchema.ESTIMATED_VARIABLE_LENGTH_SIZE);
+            byteStream = new TrustedByteArrayOutputStream(estimatedSize);
         } else {
             byteStream = new TrustedByteArrayOutputStream(estimatedSize);
         }
