@@ -96,11 +96,12 @@ public class ArrayConstructorExpression extends BaseCompoundExpression {
                         // 65 0 66 0 0 2 67 0 0 0
                         // a null null null b c null d would be
                         // 65 0 0 3 66 0 67 0 0 1 68 0 0 0
-                        offsetPos[i] = byteStream.size();;
                         if (ptr.getLength() == 0) {
+                            offsetPos[i] = byteStream.size();
                             nNulls++;
                         } else {
                             PArrayDataType.serializeNulls(oStream, nNulls);
+                            offsetPos[i] = byteStream.size();
                             oStream.write(ptr.get(), ptr.getOffset(), ptr.getLength());
                             oStream.write(QueryConstants.SEPARATOR_BYTE);
                         }

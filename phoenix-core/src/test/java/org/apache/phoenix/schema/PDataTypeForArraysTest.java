@@ -285,6 +285,24 @@ public class PDataTypeForArraysTest {
 		assertEquals("ranzzz", Bytes.toString(res));
 	}
 	
+    
+    @Test
+    public void testForVarCharArrayWithOneElementIndex() {
+        String[] strArr = new String[1];
+        strArr[0] = "abx";
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
+                PDataType.VARCHAR, strArr);
+        byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
+        PArrayDataType.positionAtArrayElement(ptr, 0, PDataType.VARCHAR);
+        int offset = ptr.getOffset();
+        int length = ptr.getLength();
+        byte[] bs = ptr.get();
+        byte[] res = new byte[length];
+        System.arraycopy(bs, offset, res, 0, length);
+        assertEquals("abx", Bytes.toString(res));
+    }
+	
 	@Ignore
 	public void testVariableLengthArrayWithElementsMoreThanShortMax() {
 	    String[] strArr = new String[(2 * Short.MAX_VALUE) + 100]; 
