@@ -21,7 +21,6 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.sql.Types;
-import java.util.Arrays;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -59,12 +58,12 @@ public class PArrayDataType {
         if(noOfElements == 0) {
         	return ByteUtil.EMPTY_BYTE_ARRAY;
         }
-        
         TrustedByteArrayOutputStream byteStream = null;
 		if (!baseType.isFixedWidth()) {
 		    size += ((2 * Bytes.SIZEOF_BYTE) + (noOfElements - nullsVsNullRepeationCounter.getFirst()) * Bytes.SIZEOF_BYTE)
 		                                + (nullsVsNullRepeationCounter.getSecond() * 2 * Bytes.SIZEOF_BYTE);
-		    // Assume an offset array that fit into Short.MAX_VALUE
+		    // Assume an offset array that fit into Short.MAX_VALUE.  Also not considering nulls that could be > 255
+		    // In both of these cases, finally an array copy would happen
 		    int capacity = noOfElements * Bytes.SIZEOF_SHORT;
 		    // Here the int for noofelements, byte for the version, int for the offsetarray position and 2 bytes for the end seperator
             byteStream = new TrustedByteArrayOutputStream(size + capacity + Bytes.SIZEOF_INT + Bytes.SIZEOF_BYTE +  Bytes.SIZEOF_INT);
@@ -73,21 +72,76 @@ public class PArrayDataType {
 		    byteStream = new TrustedByteArrayOutputStream(size + Bytes.SIZEOF_INT+ Bytes.SIZEOF_BYTE);
 		}
 		DataOutputStream oStream = new DataOutputStream(byteStream);
-		return createArrayBytes(byteStream, oStream, (PhoenixArray)object, noOfElements, baseType);
+		return createArrayBytes(byteStream, oStream, (PhoenixArray)object, noOfElements, baseType, 0);
 	}
+	
+    private byte[] rewriteArrayBytes(byte[] bytes, Integer desiredMaxLength, Integer maxLength, PDataType baseType) {
+        if (bytes == null || bytes.length == 0) { return null; }
+        ByteBuffer buffer = ByteBuffer.wrap(bytes, 0, bytes.length);
+        int initPos = buffer.position();
+        buffer.position((buffer.limit() - (Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT)));
+        int noOfElemPos = buffer.position();
+        int noOfElements = buffer.getInt();
+        int temp = noOfElements;
+        if (noOfElements < 0) {
+            noOfElements = (-noOfElements);
+        }
+        buffer.position(initPos);
+        ByteBuffer newBuffer = ByteBuffer.allocate(Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT
+                + (noOfElements * desiredMaxLength));
+        for (int i = 0; i < noOfElements; i++) {
+            byte[] val =  new byte[(noOfElemPos - initPos)/noOfElements];
+            int length = val.length;
+            buffer.get(val);
+            newBuffer.put(val);
+            while(length <  desiredMaxLength) {
+                length++;
+                newBuffer.put(StringUtil.SPACE_UTF8);
+            }
+        }
+        newBuffer.putInt(temp);
+        newBuffer.put(ARRAY_SERIALIZATION_VERSION);
+        return newBuffer.array();
+    }
 
     public static int serializeNulls(DataOutputStream oStream, int nulls) throws IOException {
+        // We need to handle 3 different cases here
+        // 1) Arrays with repeating nulls in the middle which is less than 255
+        // 2) Arrays with repeating nulls in the middle which is less than 255 but greater than bytes.MAX_VALUE
+        // 3) Arrays with repeating nulls in the middle greaterh than 255
+        // Take a case where we have two arrays that has the following elements
+        // Array 1 - size : 240, elements = abc, bcd, null, null, bcd,null,null......,null, abc
+        // Array 2 - size : 16 : elements = abc, bcd, null, null, bcd, null, null...null, abc
+        // In both case the elements and the value array will be the same but the Array 1 is actually smaller because it has more nulls.
+        // Now we should have mechanism to show that we treat arrays with more nulls as lesser.  Hence in the above case as 
+        // 240 > Bytes.MAX_VALUE, by always inverting the number of nulls we would get a +ve value
+        // For Array 2, by inverting we would get a -ve value.  On comparison Array 2 > Array 1.
+        // Now for cases where the number of nulls is greater than 255, we would write an those many (byte)1, it is bigger than 255.
+        // This would ensure that we don't compare with triple zero which is used as an end  byte
         if (nulls > 0) {
             oStream.write(QueryConstants.SEPARATOR_BYTE);
-            int nNullsWritten = nulls;
-            do {
-                byte nNullsWrittenInBytes = (byte)((nulls % 256));
-                nNullsWrittenInBytes = (byte)(nNullsWrittenInBytes & 0xf);
-                oStream.write(SortOrder.invert(nNullsWrittenInBytes)); // Single byte for repeating nulls
-                nulls -= nNullsWritten;
-            } while (nulls > 0);
+            int nMultiplesOver255 = nulls / 255;
+            while (nMultiplesOver255-- > 0) {
+                // Don't write a zero byte, as we need to ensure that the only triple zero
+                // byte occurs at the end of the array (i.e. the terminator byte for the
+                // element plus the double zero byte at the end of the array).
+                oStream.write((byte)1); 
+            }
+            int nRemainingNulls = nulls % 255; // From 0 to 254
+            // Write a byte for the remaining null elements
+            if (nRemainingNulls > 0) {
+                // Remaining null elements is from 1 to 254.
+                // Subtract one and invert so that more remaining nulls becomes smaller than less 
+                // remaining nulls and min byte value is always greater than 1, the repeating value  
+                // used for arrays with more than 255 repeating null elements.
+                // The reason we invert is that  an array with less null elements has a non
+                // null element sooner than an array with more null elements. Thus, the more
+                // null elements you have, the smaller the array becomes.
+                byte nNullByte = SortOrder.invert((byte)(nRemainingNulls-1));
+                oStream.write(nNullByte); // Single byte for repeating nulls
+            }
         }
-        return nulls;
+        return 0;
     }
  
     public static void writeEndSeperatorForVarLengthArray(DataOutputStream oStream) throws IOException {
@@ -123,19 +177,15 @@ public class PArrayDataType {
             int nulls = 0;
             int totalNulls = 0;
             for (int i = 0; i < noOfElements; i++) {
-                if (baseType == PDataType.CHAR_ARRAY) {
-                    totalVarSize += array.getMaxLength();
-                } else {
-                    totalVarSize += array.estimateByteSize(i);
-                    if (!PDataType.fromTypeId((baseType.getSqlType() - Types.ARRAY)).isFixedWidth()) {
-                        if (array.isNull(i)) {
-                            nulls++;
-                        } else {
-                            if (nulls > 0) {
-                                totalNulls += nulls;
-                                nulls = 0;
-                                nullsRepeationCounter++;
-                            }
+                totalVarSize += array.estimateByteSize(i);
+                if (!PDataType.fromTypeId((baseType.getSqlType() - Types.ARRAY)).isFixedWidth()) {
+                    if (array.isNull(i)) {
+                        nulls++;
+                    } else {
+                        if (nulls > 0) {
+                            totalNulls += nulls;
+                            nulls = 0;
+                            nullsRepeationCounter++;
                         }
                     }
                 }
@@ -174,16 +224,35 @@ public class PArrayDataType {
 			byte[] b, Integer maxLength, Integer desiredMaxLength,
 			Integer scale, Integer desiredScale) {
 		PhoenixArray pArr = (PhoenixArray) value;
-		Object[] charArr = (Object[]) pArr.array;
+		Object[] arr = (Object[]) pArr.array;
 		PDataType baseType = PDataType.fromTypeId(srcType.getSqlType()
 				- Types.ARRAY);
-		for (int i = 0 ; i < charArr.length; i++) {
-			if (!baseType.isSizeCompatible(baseType, value, b, maxLength,
+		for (int i = 0 ; i < arr.length; i++) {
+			if (!baseType.isSizeCompatible(baseType, arr[i], b, srcType.getMaxLength(arr[i]),
 					desiredMaxLength, scale, desiredScale)) {
 				return false;
 			}
 		}
 		return true;
+	}
+	
+	public byte[] coerceBytes(byte[] b, Object value, PDataType actualType, Integer maxLength, Integer scale,
+            Integer desiredMaxLength, Integer desiredScale) {
+	    PhoenixArray pArr = (PhoenixArray) value;
+        Object[] arr = (Object[]) pArr.array;
+        PDataType baseType = PDataType.fromTypeId(actualType.getSqlType()
+                - Types.ARRAY);
+        if (baseType.isFixedWidth()) {
+            boolean createNewArray = false;
+            for (int i = 0; i < arr.length; i++) {
+                if (baseType.getMaxLength(arr[i]) < desiredMaxLength) {
+                    createNewArray = true;
+                    break;
+                }
+            }
+            if (createNewArray) { return rewriteArrayBytes(b, desiredMaxLength, desiredMaxLength, baseType); }
+        }
+        return b;
 	}
 
 
@@ -205,9 +274,10 @@ public class PArrayDataType {
         int noOfElements = 0;
         noOfElements = Bytes.toInt(bytes, (ptr.getOffset() + ptr.getLength() - (Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT)),
                 Bytes.SIZEOF_INT);
-
-        if (arrayIndex >= noOfElements) { throw new IndexOutOfBoundsException("Invalid index " + arrayIndex
-                + " specified, greater than the no of eloements in the array: " + noOfElements); }
+        if (arrayIndex >= noOfElements) {
+            ptr.set(ByteUtil.EMPTY_BYTE_ARRAY);
+            return;
+        }
         boolean useShort = true;
         if (noOfElements < 0) {
             noOfElements = -noOfElements;
@@ -288,11 +358,12 @@ public class PArrayDataType {
 	 * @param array
 	 * @param noOfElements
 	 * @param baseType
+	 * @param maxLength 
 	 * @param capacity
 	 * @return
 	 */
     private byte[] createArrayBytes(TrustedByteArrayOutputStream byteStream, DataOutputStream oStream,
-            PhoenixArray array, int noOfElements, PDataType baseType) {
+            PhoenixArray array, int noOfElements, PDataType baseType, Integer maxLength) {
         try {
             if (!baseType.isFixedWidth()) {
                 int[] offsetPos = new int[noOfElements];
@@ -318,10 +389,11 @@ public class PArrayDataType {
                     byte[] bytes = array.toBytes(i);
                     int length = bytes.length;
                     if(baseType == PDataType.CHAR) {
-                        byte[] bytesWithPad = new byte[array.getMaxLength()];
-                        Arrays.fill(bytesWithPad, StringUtil.SPACE_UTF8);
-                        System.arraycopy(bytes, 0, bytesWithPad, 0, length);
-                        oStream.write(bytesWithPad, 0, bytesWithPad.length);
+                        oStream.write(bytes, 0, length);
+                        while(length <=  maxLength) {
+                            oStream.writeByte(StringUtil.SPACE_UTF8);
+                            length++;
+                        }
                     } else {
                         oStream.write(bytes, 0, length);
                     }

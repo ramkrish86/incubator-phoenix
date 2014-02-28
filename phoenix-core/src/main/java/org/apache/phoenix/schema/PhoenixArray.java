@@ -143,6 +143,10 @@ public class PhoenixArray implements Array,SQLCloseable {
 		return this.baseType.estimateByteSize(((Object[])array)[pos]);
 	}
 	
+	public Integer getMaxLength(int pos) {
+	    return this.baseType.getMaxLength(((Object[])array)[pos]);
+	}
+	
 	public byte[] toBytes(int pos) {
 		return this.baseType.toBytes(((Object[])array)[pos]);
 	}
@@ -153,16 +157,6 @@ public class PhoenixArray implements Array,SQLCloseable {
 	    } else {
 	        return false;
 	    }
-	}
-	
-	public void setMaxLength(Integer maxLength) {
-	    this.maxLength = maxLength;
-	}
-	
-	// Returns null for all cases.  For CHAR_ARRAY returns the max length associated with the 
-	// col that is of type CHAR_ARRAY
-	public int getMaxLength() {
-	    return this.maxLength;
 	}
 	
 	@Override

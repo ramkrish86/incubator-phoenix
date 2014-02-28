@@ -188,7 +188,6 @@ public class PDataTypeForArraysTest {
 		strArr[1] = "d";
 		PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
 				PDataType.CHAR, strArr);
-		arr.setMaxLength(5);
 		byte[] bytes = PDataType.CHAR_ARRAY.toBytes(arr);
 		PhoenixArray resultArr = (PhoenixArray) PDataType.CHAR_ARRAY.toObject(
 				bytes, 0, bytes.length);
@@ -1018,7 +1017,7 @@ public class PDataTypeForArraysTest {
         strArr[5] = "ran";
         arr = PArrayDataType.instantiatePhoenixArray(PDataType.VARCHAR, strArr);
         byte[] bytes2 = PDataType.VARCHAR_ARRAY.toBytes(arr);
-        assertTrue(Bytes.compareTo(bytes1, bytes2) < 0);
+        assertTrue(Bytes.compareTo(bytes1, bytes2) > 0);
     }
     
     @Test

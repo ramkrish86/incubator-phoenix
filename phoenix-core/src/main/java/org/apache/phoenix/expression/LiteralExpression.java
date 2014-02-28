@@ -29,7 +29,6 @@ import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.expression.visitor.ExpressionVisitor;
 import org.apache.phoenix.schema.IllegalDataException;
 import org.apache.phoenix.schema.PDataType;
-import org.apache.phoenix.schema.PhoenixArray;
 import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TypeMismatchException;
 import org.apache.phoenix.schema.tuple.Tuple;
@@ -127,11 +126,6 @@ public class LiteralExpression extends BaseTerminalExpression {
         return newConstant(value, type, null, null, sortOrder, isDeterministic);
     }
     
-    public static LiteralExpression newConstant(Object value, PDataType type, Integer maxLength, SortOrder sortOrder,
-            boolean isDeterministic) throws SQLException {
-        return newConstant(value, type, maxLength, null, sortOrder, isDeterministic);
-    }
-    
     public static LiteralExpression newConstant(Object value, PDataType type, Integer maxLength, Integer scale) throws SQLException {
         return newConstant(value, type, maxLength, scale, SortOrder.getDefault(), true);
     }
@@ -162,9 +156,6 @@ public class LiteralExpression extends BaseTerminalExpression {
             throw TypeMismatchException.newException(type, actualType, value.toString());
         }
         value = type.toObject(value, actualType);
-        if(type == PDataType.CHAR_ARRAY) {
-            ((PhoenixArray)value).setMaxLength(maxLength);
-        }
         try {
             byte[] b = type.toBytes(value, sortOrder);
             if (type == PDataType.VARCHAR || type == PDataType.CHAR) {
