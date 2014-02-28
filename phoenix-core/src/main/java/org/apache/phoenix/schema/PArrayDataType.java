@@ -21,12 +21,14 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.sql.Types;
+import java.util.Arrays;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.StringUtil;
 import org.apache.phoenix.util.TrustedByteArrayOutputStream;
 
 /**
@@ -77,9 +79,11 @@ public class PArrayDataType {
     public static int serializeNulls(DataOutputStream oStream, int nulls) throws IOException {
         if (nulls > 0) {
             oStream.write(QueryConstants.SEPARATOR_BYTE);
+            int nNullsWritten = nulls;
             do {
-                byte nNullsWritten = (byte)(nulls % 256);
-                oStream.write(nNullsWritten); // Single byte for repeating nulls
+                byte nNullsWrittenInBytes = (byte)((nulls % 256));
+                nNullsWrittenInBytes = (byte)(nNullsWrittenInBytes & 0xf);
+                oStream.write(SortOrder.invert(nNullsWrittenInBytes)); // Single byte for repeating nulls
                 nulls -= nNullsWritten;
             } while (nulls > 0);
         }
@@ -119,15 +123,19 @@ public class PArrayDataType {
             int nulls = 0;
             int totalNulls = 0;
             for (int i = 0; i < noOfElements; i++) {
-                totalVarSize += array.estimateByteSize(i);
-                if (!PDataType.fromTypeId((baseType.getSqlType() - Types.ARRAY)).isFixedWidth()) {
-                    if (array.isNull(i)) {
-                        nulls++;
-                    } else {
-                        if (nulls > 0) {
-                            totalNulls += nulls;
-                            nulls = 0;
-                            nullsRepeationCounter++;
+                if (baseType == PDataType.CHAR_ARRAY) {
+                    totalVarSize += array.getMaxLength();
+                } else {
+                    totalVarSize += array.estimateByteSize(i);
+                    if (!PDataType.fromTypeId((baseType.getSqlType() - Types.ARRAY)).isFixedWidth()) {
+                        if (array.isNull(i)) {
+                            nulls++;
+                        } else {
+                            if (nulls > 0) {
+                                totalNulls += nulls;
+                                nulls = 0;
+                                nullsRepeationCounter++;
+                            }
                         }
                     }
                 }
@@ -190,7 +198,8 @@ public class PArrayDataType {
 				baseType);
 	}
 
-    public static void positionAtArrayElement(ImmutableBytesWritable ptr, int arrayIndex, PDataType baseDataType) {
+    public static void positionAtArrayElement(ImmutableBytesWritable ptr, int arrayIndex, PDataType baseDataType,
+            Integer byteSize) {
         byte[] bytes = ptr.get();
         int initPos = ptr.getOffset();
         int noOfElements = 0;
@@ -205,10 +214,12 @@ public class PArrayDataType {
             useShort = false;
         }
 
-        if (baseDataType.getByteSize() == null) {
+        if (!baseDataType.isFixedWidth()) {
             int indexOffset = Bytes.toInt(bytes,
                     (ptr.getOffset() + ptr.getLength() - (Bytes.SIZEOF_BYTE + 2 * Bytes.SIZEOF_INT))) + ptr.getOffset();
-            if (noOfElements >= 1) {
+            if(arrayIndex >= noOfElements) {
+                ptr.set(ByteUtil.EMPTY_BYTE_ARRAY);
+            } else {
                 // Skip those many offsets as given in the arrayIndex
                 // If suppose there are 5 elements in the array and the arrayIndex = 3
                 // This means we need to read the 4th element of the array
@@ -228,7 +239,11 @@ public class PArrayDataType {
                 ptr.set(bytes, currOffset + initPos, elementLength);
             }
         } else {
-            ptr.set(bytes, ptr.getOffset() + arrayIndex * baseDataType.getByteSize(), baseDataType.getByteSize());
+            if (byteSize != null) {
+                ptr.set(bytes, ptr.getOffset() + (arrayIndex * byteSize), byteSize);
+            } else {
+                ptr.set(bytes, ptr.getOffset() + (arrayIndex * baseDataType.getByteSize()), baseDataType.getByteSize());
+            }
         }
     }
 
@@ -301,7 +316,15 @@ public class PArrayDataType {
             } else {
                 for (int i = 0; i < noOfElements; i++) {
                     byte[] bytes = array.toBytes(i);
-                    oStream.write(bytes, 0, bytes.length);
+                    int length = bytes.length;
+                    if(baseType == PDataType.CHAR) {
+                        byte[] bytesWithPad = new byte[array.getMaxLength()];
+                        Arrays.fill(bytesWithPad, StringUtil.SPACE_UTF8);
+                        System.arraycopy(bytes, 0, bytesWithPad, 0, length);
+                        oStream.write(bytesWithPad, 0, bytesWithPad.length);
+                    } else {
+                        oStream.write(bytes, 0, length);
+                    }
                 }
             }
             serializeHeaderInfoIntoStream(oStream, noOfElements);
@@ -385,6 +408,7 @@ public class PArrayDataType {
         ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length);
         int initPos = buffer.position();
         buffer.position((buffer.limit() - (Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT)));
+        int noOfElemPos = buffer.position();
         int noOfElements = buffer.getInt();
         boolean useShort = true;
         int baseSize = Bytes.SIZEOF_SHORT;
@@ -407,7 +431,7 @@ public class PArrayDataType {
             int currOffset = -1;
             int nextOff = -1;
             boolean foundNull = false;
-            if (noOfElements >= 1) {
+            if (noOfElements != 0) {
                 while (countOfElementsRead <= noOfElements) {
                     if (countOfElementsRead == 0) {
                         currOffset = getOffset(indexArr, countOfElementsRead, useShort, indexOffset);
@@ -443,9 +467,10 @@ public class PArrayDataType {
             buffer.position(initPos);
             for (int i = 0; i < noOfElements; i++) {
                 byte[] val;
-                if (baseDataType.getByteSize() == null) {
+                if (baseDataType == PDataType.CHAR) {
+                    int maxLength = (noOfElemPos - initPos)/noOfElements;
                     // Should be char array
-                    val = new byte[1];
+                    val = new byte[maxLength];
                 } else {
                     val = new byte[baseDataType.getByteSize()];
                 }

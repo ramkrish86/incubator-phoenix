@@ -726,7 +726,7 @@ public class UpsertCompiler {
             if (isTopLevel()) {
                 context.getBindManager().addParamMetaData(node, column);
                 Object value = context.getBindManager().getBindValue(node);
-                return LiteralExpression.newConstant(value, column.getDataType(), column.getSortOrder(), true);
+                return LiteralExpression.newConstant(value, column.getDataType(), column.getMaxLength(), column.getSortOrder(), true);
             }
             return super.visit(node);
         }    

@@ -18,6 +18,7 @@
 package org.apache.phoenix.schema;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -187,6 +188,7 @@ public class PDataTypeForArraysTest {
 		strArr[1] = "d";
 		PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
 				PDataType.CHAR, strArr);
+		arr.setMaxLength(5);
 		byte[] bytes = PDataType.CHAR_ARRAY.toBytes(arr);
 		PhoenixArray resultArr = (PhoenixArray) PDataType.CHAR_ARRAY.toObject(
 				bytes, 0, bytes.length);
@@ -276,7 +278,7 @@ public class PDataTypeForArraysTest {
 				PDataType.VARCHAR, strArr);
 		byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
 		ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-		PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
 		int offset = ptr.getOffset();
 		int length = ptr.getLength();
 		byte[] bs = ptr.get();
@@ -294,7 +296,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 0, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 0, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -317,7 +319,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -354,7 +356,7 @@ public class PDataTypeForArraysTest {
 				PDataType.VARCHAR, strArr);
 		byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
 		ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-		PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR);
+		PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
 		int offset = ptr.getOffset();
 		int length = ptr.getLength();
 		byte[] bs = ptr.get();
@@ -375,7 +377,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 2, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 2, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -396,7 +398,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 2, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 2, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -416,7 +418,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -437,7 +439,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -458,7 +460,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -480,7 +482,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -500,7 +502,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -521,7 +523,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 3, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -542,7 +544,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 0, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 0, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -563,7 +565,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -584,7 +586,7 @@ public class PDataTypeForArraysTest {
                 PDataType.VARCHAR, strArr);
         byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
         ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR);
+        PArrayDataType.positionAtArrayElement(ptr, 4, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         byte[] bs = ptr.get();
@@ -601,7 +603,7 @@ public class PDataTypeForArraysTest {
 				PDataType.VARCHAR, strArr);
 		byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
 		ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-		PArrayDataType.positionAtArrayElement(ptr, 0, PDataType.VARCHAR);
+		PArrayDataType.positionAtArrayElement(ptr, 0, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
 		int offset = ptr.getOffset();
 		int length = ptr.getLength();
 		byte[] bs = ptr.get();
@@ -619,7 +621,7 @@ public class PDataTypeForArraysTest {
 				PDataType.VARCHAR, strArr);
 		byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
 		ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-		PArrayDataType.positionAtArrayElement(ptr, 1, PDataType.VARCHAR);
+		PArrayDataType.positionAtArrayElement(ptr, 1, PDataType.VARCHAR, PDataType.VARCHAR.getByteSize());
 		int offset = ptr.getOffset();
 		int length = ptr.getLength();
 		byte[] bs = ptr.get();
@@ -640,7 +642,7 @@ public class PDataTypeForArraysTest {
 		PDataType.LONG_ARRAY.toObject(arr, PDataType.LONG_ARRAY);
 		byte[] bytes = PDataType.LONG_ARRAY.toBytes(arr);
 		ImmutableBytesWritable ptr = new ImmutableBytesWritable(bytes);
-		PArrayDataType.positionAtArrayElement(ptr, 2, PDataType.LONG);
+		PArrayDataType.positionAtArrayElement(ptr, 2, PDataType.LONG, PDataType.LONG.getByteSize());
 		int offset = ptr.getOffset();
 		int length = ptr.getLength();
 		byte[] bs = ptr.get();
@@ -672,18 +674,6 @@ public class PDataTypeForArraysTest {
 		for (int i = 0; i <= 100; i++) {
 			strArr[i] = "abc" + i;
 		}
-		PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
-				PDataType.VARCHAR, strArr);
-		byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
-		PhoenixArray resultArr = (PhoenixArray) PDataType.VARCHAR_ARRAY
-				.toObject(bytes, 0, bytes.length);
-		assertEquals(arr, resultArr);
-	}
-
-	@Test
-	public void testForVarcharArrayWith1Element() {
-		String[] strArr = new String[1];
-		strArr[0] = "abx";
 		PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
 				PDataType.VARCHAR, strArr);
 		byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
@@ -927,4 +917,180 @@ public class PDataTypeForArraysTest {
 		assertEquals(arr, resultArr);
 	}
 
+    @Test
+    public void testForArrayComparisionsForFixedWidth() {
+        Double[] doubleArr = new Double[2];
+        doubleArr[0] = 1.9993;
+        doubleArr[1] = 2.786;
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(PDataType.UNSIGNED_DOUBLE, doubleArr);
+        PDataType.UNSIGNED_DOUBLE_ARRAY.toObject(arr, PDataType.UNSIGNED_DOUBLE_ARRAY);
+        byte[] bytes1 = PDataType.UNSIGNED_DOUBLE_ARRAY.toBytes(arr);
+
+        doubleArr = new Double[2];
+        doubleArr[0] = 1.9993;
+        doubleArr[1] = 2.786;
+        arr = PArrayDataType.instantiatePhoenixArray(PDataType.UNSIGNED_DOUBLE, doubleArr);
+        PDataType.UNSIGNED_DOUBLE_ARRAY.toObject(arr, PDataType.UNSIGNED_DOUBLE_ARRAY);
+        byte[] bytes2 = PDataType.UNSIGNED_DOUBLE_ARRAY.toBytes(arr);
+        assertTrue(Bytes.equals(bytes1, bytes2));
+    }
+
+    @Test
+    public void testForArrayComparisionsWithInEqualityForFixedWidth() {
+        Double[] doubleArr = new Double[2];
+        doubleArr[0] = 1.9993;
+        doubleArr[1] = 2.786;
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(PDataType.UNSIGNED_DOUBLE, doubleArr);
+        PDataType.UNSIGNED_DOUBLE_ARRAY.toObject(arr, PDataType.UNSIGNED_DOUBLE_ARRAY);
+        byte[] bytes1 = PDataType.UNSIGNED_DOUBLE_ARRAY.toBytes(arr);
+
+        doubleArr = new Double[3];
+        doubleArr[0] = 1.9993;
+        doubleArr[1] = 2.786;
+        doubleArr[2] = 6.3;
+        arr = PArrayDataType.instantiatePhoenixArray(PDataType.UNSIGNED_DOUBLE, doubleArr);
+        PDataType.UNSIGNED_DOUBLE_ARRAY.toObject(arr, PDataType.UNSIGNED_DOUBLE_ARRAY);
+        byte[] bytes2 = PDataType.UNSIGNED_DOUBLE_ARRAY.toBytes(arr);
+        assertTrue(Bytes.compareTo(bytes1, bytes2) < 0);
+    }
+
+    @Test
+    public void testForArrayComparisonsForVarWidthArrays() {
+        String[] strArr = new String[5];
+        strArr[0] = "abc";
+        strArr[1] = "ereref";
+        strArr[2] = "random";
+        strArr[3] = "random1";
+        strArr[4] = "ran";
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(PDataType.VARCHAR, strArr);
+        byte[] bytes1 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+
+        strArr = new String[5];
+        strArr[0] = "abc";
+        strArr[1] = "ereref";
+        strArr[2] = "random";
+        strArr[3] = "random1";
+        strArr[4] = "ran";
+        arr = PArrayDataType.instantiatePhoenixArray(PDataType.VARCHAR, strArr);
+        byte[] bytes2 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        assertTrue(Bytes.equals(bytes1, bytes2));
+    }
+
+    @Test
+    public void testForArrayComparisonsInEqualityForVarWidthArrays() {
+        String[] strArr = new String[5];
+        strArr[0] = "abc";
+        strArr[1] = "ereref";
+        strArr[2] = "random";
+        strArr[3] = "random1";
+        strArr[4] = "ran";
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(PDataType.VARCHAR, strArr);
+        byte[] bytes1 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+
+        strArr = new String[5];
+        strArr[0] = "abc";
+        strArr[1] = "ereref";
+        strArr[2] = "random";
+        strArr[3] = "random1";
+        arr = PArrayDataType.instantiatePhoenixArray(PDataType.VARCHAR, strArr);
+        byte[] bytes2 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        assertTrue(Bytes.compareTo(bytes1, bytes2) > 0);
+    }
+
+    @Test
+    public void testForArrayComparsionInEqualityWithNullsRepeatingInTheMiddle() {
+        String[] strArr = new String[6];
+        strArr[0] = null;
+        strArr[1] = "ereref";
+        strArr[2] = "random";
+        strArr[3] = null;
+        strArr[4] = "ran";
+        strArr[5] = "ran";
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(PDataType.VARCHAR, strArr);
+        byte[] bytes1 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+
+        strArr = new String[6];
+        strArr[0] = null;
+        strArr[1] = "ereref";
+        strArr[2] = "random";
+        strArr[3] = null;
+        strArr[4] = null;
+        strArr[5] = "ran";
+        arr = PArrayDataType.instantiatePhoenixArray(PDataType.VARCHAR, strArr);
+        byte[] bytes2 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        assertTrue(Bytes.compareTo(bytes1, bytes2) < 0);
+    }
+    
+    @Test
+    public void testVarCharArrayWithGreatherThan255NullsInMiddle() {
+        String strArr[] = new String[300];
+        strArr[0] = "abc";
+        strArr[1] = "bcd";
+        strArr[2] = null;
+        strArr[3] = null;
+        strArr[4] = "bcd";
+        for(int i = 5; i < strArr.length - 2; i++) {
+            strArr[i] = null;
+        }
+        strArr[strArr.length - 1] = "abc";
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
+                PDataType.VARCHAR, strArr);
+        byte[] bytes = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        PhoenixArray resultArr = (PhoenixArray) PDataType.VARCHAR_ARRAY
+                .toObject(bytes, 0, bytes.length);
+        assertEquals(arr, resultArr);
+    }
+    
+    @Test
+    public void testVarCharArrayComparisonWithGreaterThan255NullsinMiddle() {
+        String strArr[] = new String[240];
+        strArr[0] = "abc";
+        strArr[1] = "bcd";
+        strArr[2] = null;
+        strArr[3] = null;
+        strArr[4] = "bcd";
+        strArr[strArr.length - 1] = "abc";
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
+                PDataType.VARCHAR, strArr);
+        byte[] bytes1 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        
+        strArr = new String[16];
+        strArr[0] = "abc";
+        strArr[1] = "bcd";
+        strArr[2] = null;
+        strArr[3] = null;
+        strArr[4] = "bcd";
+        strArr[strArr.length - 1] = "abc";
+        arr = PArrayDataType.instantiatePhoenixArray(
+                PDataType.VARCHAR, strArr);
+        byte[] bytes2 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        assertTrue(Bytes.compareTo(bytes1, bytes2) < 0);
+    }
+    
+    @Test
+    public void testVarCharArrayComparisonWithGreaterThan255NullsinMiddle1() {
+        String strArr[] = new String[500];
+        strArr[0] = "abc";
+        strArr[1] = "bcd";
+        strArr[2] = null;
+        strArr[3] = null;
+        strArr[4] = "bcd";
+        strArr[strArr.length - 1] = "abc";
+        PhoenixArray arr = PArrayDataType.instantiatePhoenixArray(
+                PDataType.VARCHAR, strArr);
+        byte[] bytes1 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        
+        strArr = new String[500];
+        strArr[0] = "abc";
+        strArr[1] = "bcd";
+        strArr[2] = null;
+        strArr[3] = null;
+        strArr[4] = "bcd";
+        strArr[strArr.length - 1] = "abc";
+        arr = PArrayDataType.instantiatePhoenixArray(
+                PDataType.VARCHAR, strArr);
+        byte[] bytes2 = PDataType.VARCHAR_ARRAY.toBytes(arr);
+        assertTrue(Bytes.compareTo(bytes1, bytes2) == 0);
+    }
+    
 }
