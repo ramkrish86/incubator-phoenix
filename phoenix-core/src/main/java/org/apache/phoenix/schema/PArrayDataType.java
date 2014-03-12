@@ -26,7 +26,6 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.util.ByteUtil;
-import org.apache.phoenix.util.StringUtil;
 import org.apache.phoenix.util.TrustedByteArrayOutputStream;
 
 import com.google.common.base.Objects;
@@ -48,7 +47,7 @@ public class PArrayDataType {
 	public PArrayDataType() {
 	}
 
-	public byte[] toBytes(Object object, PDataType baseType) {
+	public byte[] toBytes(Object object, PDataType baseType, SortOrder sortOrder) {
 		if(object == null) {
 			throw new ConstraintViolationException(this + " may not be null");
 		}
@@ -75,7 +74,8 @@ public class PArrayDataType {
 		    byteStream = new TrustedByteArrayOutputStream(size);
 		}
 		DataOutputStream oStream = new DataOutputStream(byteStream);
-		return createArrayBytes(byteStream, oStream, (PhoenixArray)object, noOfElements, baseType, 0);
+		// Handles bit inversion also
+		return createArrayBytes(byteStream, oStream, (PhoenixArray)object, noOfElements, baseType, sortOrder);
 	}
 	
     public static int serializeNulls(DataOutputStream oStream, int nulls) throws IOException {
@@ -211,25 +211,33 @@ public class PArrayDataType {
 	}
 	
 	public void coerceBytes(ImmutableBytesWritable ptr, Object value, PDataType actualType, Integer maxLength, Integer scale,
-            Integer desiredMaxLength, Integer desiredScale, PDataType desiredType) {
-	    if (ptr.getLength() == 0 || value == null) {
-	        return;
-	    }
-	    if (Objects.equal(maxLength, desiredMaxLength)) {
-	        return;
-	    }
-	    // TODO: handle bit inversion
-	    // TODO: handle coerce between different types
-	    // TODO: validate that maxLength and desiredMaxLength come through as expected
-	    // TODO: handle when value == null correct, as you may need to re-write due to coercian to different type
-	    // or bit inversion
-	    //FIXME: don't write number of elements in the case of fixed width arrays as it will mess up sort order
-	    PhoenixArray pArr = (PhoenixArray) value;
-	    pArr = new PhoenixArray(pArr, desiredMaxLength);
-        PDataType baseType = PDataType.fromTypeId(actualType.getSqlType()
-                - PDataType.ARRAY_TYPE_BASE);
-	    ptr.set(toBytes(pArr, baseType));
-	}
+            Integer desiredMaxLength, Integer desiredScale, PDataType desiredType, 
+            SortOrder actualModifer, SortOrder expectedModifier) {
+        if (ptr.getLength() == 0) { // a zero length ptr means null which will not be coerced to anything different
+            return;
+        }
+        // If the length is not changing (or there is no fixed length) and
+        // the existing type and the new type will serialize to the same bytes and
+        // the sort order is not changing, then ptr already points to the correct
+        // set of bytes and there's nothing to do
+        if ((Objects.equal(maxLength, desiredMaxLength) || maxLength == null || desiredMaxLength == null)
+                && actualType.isBytesComparableWith(desiredType) && actualModifer == expectedModifier) { 
+            return; 
+        }
+        if (Objects.equal(maxLength, desiredMaxLength)) { 
+            return; 
+        }
+        // We should call coerceBytes for CHAR as we need to pad up the CHAR based on 
+        // maxLength which will not happen for the other cases
+        PhoenixArray pArr = (PhoenixArray)value;
+        // TODO: handle coerce between different types
+        // TODO: validate that maxLength and desiredMaxLength come through as expected
+        // TODO: handle when value == null correct, as you may need to re-write due to coercian to different type
+        // or bit inversion
+        pArr = new PhoenixArray(pArr, desiredMaxLength);
+        PDataType baseType = PDataType.fromTypeId(actualType.getSqlType() - PDataType.ARRAY_TYPE_BASE);
+        ptr.set(toBytes(pArr, baseType, expectedModifier));
+    }
 
 
     public Object toObject(String value) {
@@ -331,12 +339,13 @@ public class PArrayDataType {
 	 * @param array
 	 * @param noOfElements
 	 * @param baseType
+	 * @param sortOrder 
 	 * @param maxLength 
 	 * @param capacity
 	 * @return
 	 */
     private byte[] createArrayBytes(TrustedByteArrayOutputStream byteStream, DataOutputStream oStream,
-            PhoenixArray array, int noOfElements, PDataType baseType, Integer maxLength) {
+            PhoenixArray array, int noOfElements, PDataType baseType, SortOrder sortOrder) {
         try {
             if (!baseType.isFixedWidth()) {
                 int[] offsetPos = new int[noOfElements];
@@ -349,6 +358,9 @@ public class PArrayDataType {
                     } else {
                         nulls = serializeNulls(oStream, nulls);
                         offsetPos[i] = byteStream.size();
+                        if (sortOrder == SortOrder.DESC) {
+                            SortOrder.invert(bytes, 0, bytes, 0, bytes.length);
+                        }
                         oStream.write(bytes, 0, bytes.length);
                         oStream.write(QueryConstants.SEPARATOR_BYTE);
                     }
@@ -362,15 +374,10 @@ public class PArrayDataType {
                 for (int i = 0; i < noOfElements; i++) {
                     byte[] bytes = array.toBytes(i);
                     int length = bytes.length;
-                    if(baseType == PDataType.CHAR) {
-                        oStream.write(bytes, 0, length);
-                        while(length <=  maxLength) {
-                            oStream.writeByte(StringUtil.SPACE_UTF8);
-                            length++;
-                        }
-                    } else {
-                        oStream.write(bytes, 0, length);
+                    if (sortOrder == SortOrder.DESC) {
+                        SortOrder.invert(bytes, 0, bytes, 0, bytes.length);
                     }
+                    oStream.write(bytes, 0, length);
                 }
             }
             ImmutableBytesWritable ptr = new ImmutableBytesWritable();

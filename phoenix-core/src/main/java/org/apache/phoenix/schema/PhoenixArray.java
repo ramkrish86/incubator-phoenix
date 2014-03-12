@@ -340,6 +340,7 @@ public class PhoenixArray implements Array,SQLCloseable {
 		public Object convertObjectArrayToPrimitiveArray(Object[] elements) {
 			Object object = java.lang.reflect.Array.newInstance(long.class,
 					elements.length);
+			
 			longArr = (long[]) object;
 			int i = 0;
             for(Object o : elements) {
