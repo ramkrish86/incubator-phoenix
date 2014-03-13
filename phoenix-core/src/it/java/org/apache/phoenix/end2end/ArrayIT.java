@@ -43,7 +43,6 @@ import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.StringUtil;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import com.google.common.primitives.Floats;
@@ -618,7 +617,7 @@ public class ArrayIT extends BaseClientManagedTimeIT {
         conn.close();
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 40));
         conn = DriverManager.getConnection(getUrl(), props);
-        rs = conn.createStatement().executeQuery("SELECT CAST(a AS DOUBLE ARRAY) FROM t");
+        rs = conn.createStatement().executeQuery("SELECT CAST(a AS DOUBLE []) FROM t");
         assertTrue(rs.next());
         Double[] d = new Double[] { 1.0, 2.0 };
         array = conn.createArrayOf("DOUBLE", d);
@@ -627,7 +626,7 @@ public class ArrayIT extends BaseClientManagedTimeIT {
         conn.close();
     }
 
-    @Ignore
+    @Test
     public void testArrayWithCastForVarLengthArr() throws Exception {
         Connection conn;
         PreparedStatement stmt;

@@ -216,14 +216,9 @@ public class PArrayDataType {
         if (ptr.getLength() == 0) { // a zero length ptr means null which will not be coerced to anything different
             return;
         }
-        // If the length is not changing (or there is no fixed length) and
-        // the existing type and the new type will serialize to the same bytes and
-        // the sort order is not changing, then ptr already points to the correct
-        // set of bytes and there's nothing to do.
-        // for fixed arrays desired max length would be null, in such cases do not call
-        // toBytes unless there is a change in the sort order or type changes
         if ((Objects.equal(maxLength, desiredMaxLength) || maxLength == null || desiredMaxLength == null)
-                && actualType.isBytesComparableWith(desiredType) && actualModifer == expectedModifier) { 
+                && actualType.isBytesComparableWith(desiredType)
+                && actualType.isFixedWidth() == desiredType.isFixedWidth() && actualModifer == expectedModifier) { 
             return; 
         }
         PDataType baseType = PDataType.fromTypeId(actualType.getSqlType() - PDataType.ARRAY_TYPE_BASE);
@@ -243,7 +238,6 @@ public class PArrayDataType {
 
 
     public Object toObject(String value) {
-		// TODO: Do this as done in CSVLoader
 		throw new IllegalArgumentException("This operation is not suppported");
 	}
 
