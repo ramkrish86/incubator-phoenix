@@ -43,6 +43,7 @@ import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.StringUtil;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.google.common.primitives.Floats;
@@ -562,6 +563,103 @@ public class ArrayIT extends BaseClientManagedTimeIT {
     }
 
     @Test
+    public void testArraySelectSingleArrayElemWithCast() throws Exception {
+        Connection conn;
+        PreparedStatement stmt;
+        ResultSet rs;
+        long ts = nextTimestamp();
+        Properties props = new Properties(TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
+        conn = DriverManager.getConnection(getUrl(), props);
+        conn.createStatement().execute("CREATE TABLE t ( k VARCHAR PRIMARY KEY, a bigint ARRAY[])");
+        conn.close();
+        
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
+        conn = DriverManager.getConnection(getUrl(), props);
+        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?)");
+        stmt.setString(1, "a");
+        Long[] s = new Long[] {1l, 2l};
+        Array array = conn.createArrayOf("BIGINT", s);
+        stmt.setArray(2, array);
+        stmt.execute();
+        conn.commit();
+        conn.close();
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 40));
+        conn = DriverManager.getConnection(getUrl(), props);
+        rs = conn.createStatement().executeQuery("SELECT k, CAST(a[2] AS DOUBLE) FROM t");
+        assertTrue(rs.next());
+        assertEquals("a",rs.getString(1));
+        Double d = new Double(2.0);
+        assertEquals(d, (Double)rs.getDouble(2));
+        conn.close();
+    }
+
+    @Test
+    public void testArrayWithCast() throws Exception {
+        Connection conn;
+        PreparedStatement stmt;
+        ResultSet rs;
+        long ts = nextTimestamp();
+        Properties props = new Properties(TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
+        conn = DriverManager.getConnection(getUrl(), props);
+        conn.createStatement().execute("CREATE TABLE t ( k VARCHAR PRIMARY KEY, a bigint ARRAY[])");
+        conn.close();
+
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
+        conn = DriverManager.getConnection(getUrl(), props);
+        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?)");
+        stmt.setString(1, "a");
+        Long[] s = new Long[] { 1l, 2l };
+        Array array = conn.createArrayOf("BIGINT", s);
+        stmt.setArray(2, array);
+        stmt.execute();
+        conn.commit();
+        conn.close();
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 40));
+        conn = DriverManager.getConnection(getUrl(), props);
+        rs = conn.createStatement().executeQuery("SELECT CAST(a AS DOUBLE ARRAY) FROM t");
+        assertTrue(rs.next());
+        Double[] d = new Double[] { 1.0, 2.0 };
+        array = conn.createArrayOf("DOUBLE", d);
+        PhoenixArray arr = (PhoenixArray)rs.getArray(1);
+        assertEquals(array, arr);
+        conn.close();
+    }
+
+    @Ignore
+    public void testArrayWithCastForVarLengthArr() throws Exception {
+        Connection conn;
+        PreparedStatement stmt;
+        ResultSet rs;
+        long ts = nextTimestamp();
+        Properties props = new Properties(TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
+        conn = DriverManager.getConnection(getUrl(), props);
+        conn.createStatement().execute("CREATE TABLE t ( k VARCHAR PRIMARY KEY, a VARCHAR(5) ARRAY)");
+        conn.close();
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
+        conn = DriverManager.getConnection(getUrl(), props);
+        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?)");
+        stmt.setString(1, "a");
+        String[] s = new String[] { "1", "2" };
+        Array array = conn.createArrayOf("VARCHAR", s);
+        stmt.setArray(2, array);
+        stmt.execute();
+        conn.commit();
+        conn.close();
+
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 40));
+        conn = DriverManager.getConnection(getUrl(), props);
+        rs = conn.createStatement().executeQuery("SELECT CAST(a AS CHAR ARRAY) FROM t");
+        assertTrue(rs.next());
+        PhoenixArray arr = (PhoenixArray)rs.getArray(1);
+        assertEquals(array, arr);
+        conn.close();
+        conn.close();
+    }
+
+    @Test
     public void testFixedWidthCharArray() throws Exception {
         Connection conn;
         PreparedStatement stmt;
@@ -599,7 +697,6 @@ public class ArrayIT extends BaseClientManagedTimeIT {
         assertEquals("a",rs.getString(1));
         assertEquals("2",rs.getString(2));
         conn.close();
-        
     }
  
 	@Test

@@ -40,14 +40,23 @@ public class CastParseNode extends UnaryParseNode {
 	
 	private final PDataType dt;
 	
-	CastParseNode(ParseNode expr, String dataType) {
+	CastParseNode(ParseNode expr, String dataType, boolean arr) {
 		super(expr);
-		dt = PDataType.fromSqlTypeName(SchemaUtil.normalizeIdentifier(dataType));
+		if(arr == true) {
+		    PDataType baseType = PDataType.fromSqlTypeName(SchemaUtil.normalizeIdentifier(dataType));
+		    dt = PDataType.fromTypeId(baseType.getSqlType() + PDataType.ARRAY_TYPE_BASE);
+		} else {
+		    dt = PDataType.fromSqlTypeName(SchemaUtil.normalizeIdentifier(dataType));
+		}
 	}
 	
-	CastParseNode(ParseNode expr, PDataType dataType) {
-		super(expr);
-		dt = dataType;
+	CastParseNode(ParseNode expr, PDataType dataType, boolean arr) {
+        super(expr);
+        if (arr == true) {
+            dt = PDataType.fromTypeId(dataType.getSqlType() + PDataType.ARRAY_TYPE_BASE);
+        } else {
+            dt = dataType;
+        }
 	}
 
 	@Override
