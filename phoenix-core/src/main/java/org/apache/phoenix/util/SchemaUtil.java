@@ -52,8 +52,6 @@ import org.apache.phoenix.schema.SaltingUtil;
 import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.ValueSchema.Field;
 
-
-
 /**
  * 
  * Static class for various schema-related utilities

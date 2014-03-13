@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
@@ -359,7 +360,7 @@ public class SpillableGroupByCache implements GroupByCache {
             }
 
             @Override
-            public boolean next(List<KeyValue> results) throws IOException {
+            public boolean next(List<Cell> results) throws IOException {
                 if (!cacheIter.hasNext()) { return false; }
                 Map.Entry<ImmutableBytesWritable, Aggregator[]> ce = cacheIter.next();
                 ImmutableBytesWritable key = ce.getKey();
@@ -373,6 +374,11 @@ public class SpillableGroupByCache implements GroupByCache {
                 results.add(KeyValueUtil.newKeyValue(key.get(), key.getOffset(), key.getLength(), SINGLE_COLUMN_FAMILY,
                         SINGLE_COLUMN, AGG_TIMESTAMP, value, 0, value.length));
                 return cacheIter.hasNext();
+            }
+
+            @Override
+            public long getMaxResultSize() {
+              return s.getMaxResultSize();
             }
         };
     }

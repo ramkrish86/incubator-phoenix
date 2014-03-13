@@ -21,9 +21,12 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.schema.tuple.BaseTuple;
@@ -66,9 +69,9 @@ public class RowKeyComparisonFilter extends BooleanExpressionFilter {
      * to be called with deleted or partial row keys.
      */
     @Override
-    public ReturnCode filterKeyValue(KeyValue v) {
+    public ReturnCode filterKeyValue(Cell v) {
         if (evaluate) {
-            inputTuple.setKey(v.getBuffer(), v.getRowOffset(), v.getRowLength());
+            inputTuple.setKey(v.getRowArray(), v.getRowOffset(), v.getRowLength());
             this.keepRow = Boolean.TRUE.equals(evaluate(inputTuple));
             if (logger.isDebugEnabled()) {
                 logger.debug("RowKeyComparisonFilter: " + (this.keepRow ? "KEEP" : "FILTER")  + " row " + inputTuple);
@@ -149,5 +152,13 @@ public class RowKeyComparisonFilter extends BooleanExpressionFilter {
     public void write(DataOutput output) throws IOException {
         super.write(output);
         WritableUtils.writeCompressedByteArray(output, this.essentialCF);
+    }
+    
+    public static RowKeyComparisonFilter parseFrom(final byte [] pbBytes) throws DeserializationException {
+        try {
+            return (RowKeyComparisonFilter)Writables.getWritable(pbBytes, new RowKeyComparisonFilter());
+        } catch (IOException e) {
+            throw new DeserializationException(e);
+        }
     }
 }

@@ -22,7 +22,7 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
@@ -163,19 +163,19 @@ public class IndexUtil {
                             if (isEmptyKeyValue(table, ref)) {
                                 return null;
                             }
-                            Map<byte [], List<KeyValue>> familyMap = dataMutation.getFamilyMap();
+                            Map<byte [], List<Cell>> familyMap = dataMutation.getFamilyCellMap();
                             byte[] family = ref.getFamily();
-                            List<KeyValue> kvs = familyMap.get(family);
+                            List<Cell> kvs = familyMap.get(family);
                             if (kvs == null) {
                                 return null;
                             }
                             byte[] qualifier = ref.getQualifier();
-                            for (KeyValue kv : kvs) {
-                                if (  kvBuilder.compareFamily(kv, family, 0, family.length) == 0
-                                   && kvBuilder.compareQualifier(kv, qualifier, 0, qualifier.length) == 0) {
-                                    ImmutableBytesPtr ptr = new ImmutableBytesPtr();
-                                    kvBuilder.getValueAsPtr(kv, ptr);
-                                    return ptr;
+                            for (Cell kv : kvs) {
+                                if (Bytes.compareTo(kv.getFamilyArray(), kv.getFamilyOffset(), kv.getFamilyLength(), family, 0, family.length) == 0 &&
+                                    Bytes.compareTo(kv.getQualifierArray(), kv.getQualifierOffset(), kv.getQualifierLength(), qualifier, 0, qualifier.length) == 0) {
+                                  ImmutableBytesPtr ptr = new ImmutableBytesPtr();
+                                  kvBuilder.getValueAsPtr(kv, ptr);
+                                  return ptr;
                                 }
                             }
                             return null;

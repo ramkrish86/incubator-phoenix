@@ -62,6 +62,7 @@ import org.apache.phoenix.jdbc.PhoenixTestDriver;
 import org.apache.phoenix.schema.TableAlreadyExistsException;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.ReadOnlyProps;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.AfterClass;
 
 import com.google.common.collect.ImmutableMap;
@@ -411,6 +412,7 @@ public abstract class BaseTest {
         if (PhoenixEmbeddedDriver.isTestUrl(url)) {
             PhoenixTestDriver driver = initDriver(props);
             assertTrue(DriverManager.getDriver(url) == driver);
+            driver.connect(url, TestUtil.TEST_PROPERTIES);
         }
     }
     

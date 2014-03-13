@@ -222,7 +222,7 @@ public class QueryOptimizer {
      *    b) the plan that preserves ordering for a group by.
      *    c) the data table plan
      * @param plans the list of candidate plans
-     * @return
+     * @return QueryPlan
      */
     private QueryPlan chooseBestPlan(SelectStatement select, List<QueryPlan> plans) {
         final QueryPlan dataPlan = plans.get(0);

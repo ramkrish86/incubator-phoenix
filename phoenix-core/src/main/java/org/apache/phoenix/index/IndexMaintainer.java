@@ -31,9 +31,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Durability;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -383,7 +385,6 @@ public class IndexMaintainer implements Writable, Iterable<ColumnReference> {
         }
     }
 
-    @SuppressWarnings("deprecation")
     public Put buildUpdateMutation(KeyValueBuilder kvBuilder, ValueGetter valueGetter, ImmutableBytesWritable dataRowKeyPtr, long ts) throws IOException {
         Put put = null;
         // New row being inserted: add the empty key value
@@ -394,7 +395,7 @@ public class IndexMaintainer implements Writable, Iterable<ColumnReference> {
             put.add(kvBuilder.buildPut(new ImmutableBytesPtr(indexRowKey),
                 this.getEmptyKeyValueFamily(), QueryConstants.EMPTY_COLUMN_BYTES_PTR, ts,
                 ByteUtil.EMPTY_BYTE_ARRAY_PTR));
-            put.setWriteToWAL(!indexWALDisabled);
+            put.setDurability(!indexWALDisabled ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
         }
         int i = 0;
         for (ColumnReference ref : this.getCoverededColumns()) {
@@ -405,7 +406,7 @@ public class IndexMaintainer implements Writable, Iterable<ColumnReference> {
             if (value != null) {
                 if (put == null) {
                     put = new Put(indexRowKey);
-                    put.setWriteToWAL(!indexWALDisabled);
+                    put.setDurability(!indexWALDisabled ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
                 }
                 //this is a little bit of extra work for installations that are running <0.94.14, but that should be rare and is a short-term set of wrappers - it shouldn't kill GC
                 put.add(kvBuilder.buildPut(rowKey, ref.getFamilyWritable(), cq, ts, value));
@@ -425,9 +426,10 @@ public class IndexMaintainer implements Writable, Iterable<ColumnReference> {
     public boolean isRowDeleted(Collection<KeyValue> pendingUpdates) {
         int nDeleteCF = 0;
         for (KeyValue kv : pendingUpdates) {
-            if (kv.getType() == KeyValue.Type.DeleteFamily.getCode()) {
+            if (kv.getTypeByte() == KeyValue.Type.DeleteFamily.getCode()) {
                 nDeleteCF++;
-                boolean isEmptyCF = Bytes.compareTo(kv.getFamily(), dataEmptyKeyValueCF) == 0;
+                boolean isEmptyCF = Bytes.compareTo(kv.getFamilyArray(), kv.getFamilyOffset(), kv.getFamilyLength(), 
+                  dataEmptyKeyValueCF, 0, dataEmptyKeyValueCF.length) == 0;
                 // This is what a delete looks like on the client side for immutable indexing...
                 if (isEmptyCF) {
                     return true;
@@ -444,7 +446,7 @@ public class IndexMaintainer implements Writable, Iterable<ColumnReference> {
         }
         Map<ColumnReference,KeyValue> newState = Maps.newHashMapWithExpectedSize(pendingUpdates.size()); 
         for (KeyValue kv : pendingUpdates) {
-            newState.put(new ColumnReference(kv.getFamily(), kv.getQualifier()), kv);
+            newState.put(new ColumnReference(CellUtil.cloneFamily(kv), CellUtil.cloneQualifier(kv)), kv);
         }
         for (ColumnReference ref : indexedColumns) {
             KeyValue newValue = newState.get(ref);
@@ -453,7 +455,7 @@ public class IndexMaintainer implements Writable, Iterable<ColumnReference> {
                 // If there was no old value or the old value is different than the new value, the index row needs to be deleted
                 if (oldValue == null || 
                         Bytes.compareTo(oldValue.get(), oldValue.getOffset(), oldValue.getLength(), 
-                                                   newValue.getBuffer(), newValue.getValueOffset(), newValue.getValueLength()) != 0){
+                          newValue.getValueArray(), newValue.getValueOffset(), newValue.getValueLength()) != 0){
                     return true;
                 }
             }
@@ -474,19 +476,19 @@ public class IndexMaintainer implements Writable, Iterable<ColumnReference> {
         byte[] indexRowKey = this.buildRowKey(oldState, dataRowKeyPtr);
         // Delete the entire row if any of the indexed columns changed
         if (oldState == null || isRowDeleted(pendingUpdates) || hasIndexedColumnChanged(oldState, pendingUpdates)) { // Deleting the entire row
-            Delete delete = new Delete(indexRowKey, ts, null);
-            delete.setWriteToWAL(!indexWALDisabled);
+            Delete delete = new Delete(indexRowKey, ts);
+            delete.setDurability(!indexWALDisabled ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
             return delete;
         }
         Delete delete = null;
         // Delete columns for missing key values
         for (KeyValue kv : pendingUpdates) {
-            if (kv.getType() != KeyValue.Type.Put.getCode()) {
+            if (kv.getTypeByte() != KeyValue.Type.Put.getCode()) {
                 ColumnReference ref = new ColumnReference(kv.getFamily(), kv.getQualifier());
                 if (coveredColumns.contains(ref)) {
                     if (delete == null) {
                         delete = new Delete(indexRowKey);                    
-                        delete.setWriteToWAL(!indexWALDisabled);
+                        delete.setDurability(!indexWALDisabled ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
                     }
                     delete.deleteColumns(ref.getFamily(), IndexUtil.getIndexColumnName(ref.getFamily(), ref.getQualifier()), ts);
                 }

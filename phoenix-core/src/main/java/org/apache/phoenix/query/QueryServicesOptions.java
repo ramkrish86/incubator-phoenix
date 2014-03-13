@@ -58,7 +58,8 @@ import java.util.Map.Entry;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.regionserver.wal.WALEditCodec;
+import org.apache.hadoop.hbase.regionserver.wal.WALCellCodec;
+
 import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.ReadOnlyProps;
 
@@ -415,7 +416,7 @@ public class QueryServicesOptions {
     }
 
     public QueryServicesOptions setWALEditCodec(String walEditCodec) {
-        return set(WALEditCodec.WAL_EDIT_CODEC_CLASS_KEY, walEditCodec);
+        return set(WALCellCodec.WAL_CELL_CODEC_CLASS_KEY, walEditCodec);
     }
 
 }

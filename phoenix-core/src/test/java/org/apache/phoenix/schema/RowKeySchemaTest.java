@@ -87,7 +87,7 @@ public class RowKeySchemaTest  extends BaseConnectionlessQueryTest  {
             }
         }
         int i = 0;
-        int maxOffset = schema.iterator(keyValue.getBuffer(), minOffset, keyValue.getRowLength(), ptr);
+        int maxOffset = schema.iterator(keyValue.getRowArray(), minOffset, keyValue.getRowLength(), ptr);
         for (i = 0; i < schema.getFieldCount(); i++) {
             Boolean hasValue = schema.next(ptr, i, maxOffset);
             if (hasValue == null) {

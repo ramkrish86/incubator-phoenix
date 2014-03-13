@@ -17,15 +17,27 @@
  */
 package org.apache.phoenix.filter;
 
-import java.io.*;
-import java.util.*;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.NavigableSet;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.Type;
+import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.filter.FilterBase;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Writables;
+import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.query.QueryConstants;
@@ -35,7 +47,7 @@ import org.apache.phoenix.query.QueryConstants;
  *
  * @since 3.0
  */
-public class ColumnProjectionFilter extends FilterBase {
+public class ColumnProjectionFilter extends FilterBase implements Writable {
 
     private byte[] emptyCFName;
     private Map<ImmutableBytesPtr, NavigableSet<ImmutableBytesPtr>> columnsTracker;
@@ -52,7 +64,6 @@ public class ColumnProjectionFilter extends FilterBase {
         this.conditionOnlyCfs = conditionOnlyCfs;
     }
 
-    @Override
     public void readFields(DataInput input) throws IOException {
         this.emptyCFName = WritableUtils.readCompressedByteArray(input);
         int familyMapSize = WritableUtils.readVInt(input);
@@ -80,7 +91,6 @@ public class ColumnProjectionFilter extends FilterBase {
         }
     }
 
-    @Override
     public void write(DataOutput output) throws IOException {
         WritableUtils.writeCompressedByteArray(output, this.emptyCFName);
         WritableUtils.writeVInt(output, this.columnsTracker.size());
@@ -104,16 +114,29 @@ public class ColumnProjectionFilter extends FilterBase {
     }
 
     @Override
+    public byte[] toByteArray() throws IOException {
+        return Writables.getBytes(this);
+    }
+    
+    public static ColumnProjectionFilter parseFrom(final byte [] pbBytes) throws DeserializationException {
+        try {
+            return (ColumnProjectionFilter)Writables.getWritable(pbBytes, new ColumnProjectionFilter());
+        } catch (IOException e) {
+            throw new DeserializationException(e);
+        }
+    }
+    
+    @Override
     public void filterRow(List<KeyValue> kvs) {
         if (kvs.isEmpty()) return;
         KeyValue firstKV = kvs.get(0);
         Iterator<KeyValue> itr = kvs.iterator();
         while (itr.hasNext()) {
             KeyValue kv = itr.next();
-            ImmutableBytesPtr f = new ImmutableBytesPtr(kv.getBuffer(), kv.getFamilyOffset(), kv.getFamilyLength());
+            ImmutableBytesPtr f = new ImmutableBytesPtr(kv.getFamilyArray(), kv.getFamilyOffset(), kv.getFamilyLength());
             if (this.columnsTracker.containsKey(f)) {
                 Set<ImmutableBytesPtr> cols = this.columnsTracker.get(f);
-                ImmutableBytesPtr q = new ImmutableBytesPtr(kv.getBuffer(), kv.getQualifierOffset(),
+                ImmutableBytesPtr q = new ImmutableBytesPtr(kv.getQualifierArray(), kv.getQualifierOffset(),
                         kv.getQualifierLength());
                 if (cols != null && !(cols.contains(q))) {
                     itr.remove();
@@ -123,7 +146,7 @@ public class ColumnProjectionFilter extends FilterBase {
             }
         }
         if (kvs.isEmpty()) {
-            kvs.add(new KeyValue(firstKV.getBuffer(), firstKV.getRowOffset(), firstKV.getRowLength(), this.emptyCFName,
+            kvs.add(new KeyValue(firstKV.getRowArray(), firstKV.getRowOffset(), firstKV.getRowLength(), this.emptyCFName,
                     0, this.emptyCFName.length, QueryConstants.EMPTY_COLUMN_BYTES, 0,
                     QueryConstants.EMPTY_COLUMN_BYTES.length, HConstants.LATEST_TIMESTAMP, Type.Maximum, null, 0, 0));
         }
@@ -142,5 +165,10 @@ public class ColumnProjectionFilter extends FilterBase {
     @Override
     public String toString() {
         return "";
+    }
+    
+    @Override
+    public ReturnCode filterKeyValue(Cell ignored) throws IOException {
+      return ReturnCode.INCLUDE;
     }
 }

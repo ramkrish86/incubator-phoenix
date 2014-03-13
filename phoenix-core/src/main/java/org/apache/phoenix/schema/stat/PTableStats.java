@@ -19,6 +19,7 @@ package org.apache.phoenix.schema.stat;
 
 import java.io.DataOutput;
 import java.io.IOException;
+import java.util.Map;
 
 import org.apache.hadoop.hbase.HRegionInfo;
 
@@ -41,5 +42,5 @@ public interface PTableStats {
      */
     byte[][] getRegionGuidePosts(HRegionInfo region);
 
-    void write(DataOutput output) throws IOException;
+    Map<String, byte[][]> getGuidePosts();
 }

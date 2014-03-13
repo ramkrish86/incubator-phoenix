@@ -17,7 +17,11 @@
  */
 package org.apache.phoenix.filter;
 
+import java.io.IOException;
+
+import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Writables;
 
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
@@ -64,5 +68,13 @@ public class MultiCQKeyValueComparisonFilter extends MultiKeyValueComparisonFilt
     @SuppressWarnings("all") // suppressing missing @Override since this doesn't exist for HBase 0.94.4
     public boolean isFamilyEssential(byte[] name) {
         return Bytes.compareTo(cf, name) == 0;
+    }
+    
+    public static MultiCQKeyValueComparisonFilter parseFrom(final byte [] pbBytes) throws DeserializationException {
+        try {
+            return (MultiCQKeyValueComparisonFilter)Writables.getWritable(pbBytes, new MultiCQKeyValueComparisonFilter());
+        } catch (IOException e) {
+            throw new DeserializationException(e);
+        }
     }
 }

@@ -31,8 +31,10 @@ import java.util.Set;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.KeyValueUtil;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
@@ -146,8 +148,9 @@ public class CoveredColumnsIndexBuilder extends BaseIndexBuilder {
    */
   protected Collection<Batch> createTimestampBatchesFromMutation(Mutation m) {
     Map<Long, Batch> batches = new HashMap<Long, Batch>();
-    for (List<KeyValue> family : m.getFamilyMap().values()) {
-      createTimestampBatchesFromKeyValues(family, batches);
+    for (List<Cell> family : m.getFamilyCellMap().values()) {
+      List<KeyValue> familyKVs = KeyValueUtil.ensureKeyValues(family);
+      createTimestampBatchesFromKeyValues(familyKVs, batches);
     }
     // sort the batches
     List<Batch> sorted = new ArrayList<Batch>(batches.values());
@@ -418,7 +421,7 @@ public class CoveredColumnsIndexBuilder extends BaseIndexBuilder {
 
     // We have to figure out which kind of delete it is, since we need to do different things if its
     // a general (row) delete, versus a delete of just a single column or family
-    Map<byte[], List<KeyValue>> families = d.getFamilyMap();
+    Map<byte[], List<Cell>> families = d.getFamilyCellMap();
 
     /*
      * Option 1: its a row delete marker, so we just need to delete the most recent state for each

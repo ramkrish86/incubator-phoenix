@@ -20,6 +20,7 @@ package org.apache.phoenix.coprocessor;
 import java.io.IOException;
 import java.util.List;
 
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
@@ -32,16 +33,12 @@ public abstract class BaseRegionScanner implements RegionScanner {
     }
 
     @Override
-    public boolean next(List<KeyValue> results, String metric) throws IOException {
+    public boolean next(List<Cell> results) throws IOException {
         return next(results);
     }
 
     @Override
-    public boolean next(List<KeyValue> result, int limit, String metric) throws IOException {
-        return next(result);
-    }
-    @Override
-    public boolean next(List<KeyValue> result, int limit) throws IOException {
+    public boolean next(List<Cell> result, int limit) throws IOException {
         return next(result);
     }
     
@@ -56,12 +53,12 @@ public abstract class BaseRegionScanner implements RegionScanner {
     }
 
     @Override
-    public boolean nextRaw(List<KeyValue> result, String metric) throws IOException {
-        return next(result, metric);
+    public boolean nextRaw(List<Cell> result) throws IOException {
+        return next(result);
     }
 
     @Override
-    public boolean nextRaw(List<KeyValue> result, int limit, String metric) throws IOException {
-        return next(result, limit, metric);
+    public boolean nextRaw(List<Cell> result, int limit) throws IOException {
+        return next(result, limit);
     }
 }

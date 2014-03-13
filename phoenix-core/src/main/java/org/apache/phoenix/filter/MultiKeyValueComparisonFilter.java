@@ -22,7 +22,9 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.KeyValueUtil;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.expression.Expression;
@@ -60,7 +62,8 @@ public abstract class MultiKeyValueComparisonFilter extends BooleanExpressionFil
         @Override
         public String toString() {
             if(keyValue != null) {
-                return keyValue.toString() + " value = " + Bytes.toStringBinary(keyValue.getValue());
+                return keyValue.toString() + " value = " + Bytes.toStringBinary(
+                		keyValue.getValueArray(), keyValue.getValueOffset(), keyValue.getValueLength());
             } else {
                 return super.toString();
             }
@@ -96,8 +99,8 @@ public abstract class MultiKeyValueComparisonFilter extends BooleanExpressionFil
             // Always set key, in case we never find a key value column of interest,
             // and our expression uses row key columns.
             setKey(value);
-            byte[] buf = value.getBuffer();
-            Object ptr = setColumnKey(buf, value.getFamilyOffset(), value.getFamilyLength(), buf, value.getQualifierOffset(), value.getQualifierLength());
+            Object ptr = setColumnKey(value.getFamilyArray(), value.getFamilyOffset(), value.getFamilyLength(), 
+            		value.getQualifierArray(), value.getQualifierOffset(), value.getQualifierLength());
             KeyValueRef ref = foundColumns.get(ptr);
             if (ref == null) {
                 // Return INCLUDE here. Although this filter doesn't need this KV
@@ -125,7 +128,7 @@ public abstract class MultiKeyValueComparisonFilter extends BooleanExpressionFil
         }
         
         public void setKey(KeyValue value) {
-            keyPtr.set(value.getBuffer(), value.getRowOffset(), value.getRowLength());
+            keyPtr.set(value.getRowArray(), value.getRowOffset(), value.getRowLength());
         }
         
         @Override
@@ -172,7 +175,7 @@ public abstract class MultiKeyValueComparisonFilter extends BooleanExpressionFil
             KeyValue kv = getValue(family, qualifier);
             if (kv == null)
                 return false;
-            ptr.set(kv.getBuffer(), kv.getValueOffset(), kv.getValueLength());
+            ptr.set(kv.getValueArray(), kv.getValueOffset(), kv.getValueLength());
             return true;
         }
     }
@@ -190,7 +193,7 @@ public abstract class MultiKeyValueComparisonFilter extends BooleanExpressionFil
     }
     
     @Override
-    public ReturnCode filterKeyValue(KeyValue keyValue) {
+    public ReturnCode filterKeyValue(Cell keyValue) {
         if (Boolean.TRUE.equals(this.matchedColumn)) {
           // We already found and matched the single column, all keys now pass
           return ReturnCode.INCLUDE;
@@ -200,7 +203,7 @@ public abstract class MultiKeyValueComparisonFilter extends BooleanExpressionFil
           return ReturnCode.NEXT_ROW;
         }
         // This is a key value we're not interested in (TODO: why INCLUDE here instead of NEXT_COL?)
-        ReturnCode code = inputTuple.resolveColumn(keyValue);
+        ReturnCode code = inputTuple.resolveColumn(KeyValueUtil.ensureKeyValue(keyValue));
         if (code != null) {
             return code;
         }

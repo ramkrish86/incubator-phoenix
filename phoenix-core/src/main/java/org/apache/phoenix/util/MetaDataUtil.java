@@ -23,6 +23,7 @@ import java.sql.SQLException;
 import java.util.Collection;
 import java.util.List;
 
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Mutation;
@@ -30,7 +31,6 @@ import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.coprocessor.MetaDataProtocol;
-import org.apache.phoenix.hbase.index.util.ClientKeyValue;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.hbase.index.util.KeyValueBuilder;
 import org.apache.phoenix.hbase.index.util.VersionUtil;
@@ -129,11 +129,11 @@ public class MetaDataUtil {
     }
     
     public static long getSequenceNumber(Mutation tableMutation) {
-        List<KeyValue> kvs = tableMutation.getFamilyMap().get(PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES);
+        List<Cell> kvs = tableMutation.getFamilyCellMap().get(PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES);
         if (kvs != null) {
-            for (KeyValue kv : kvs) { // list is not ordered, so search. TODO: we could potentially assume the position
-                if (Bytes.compareTo(kv.getBuffer(), kv.getQualifierOffset(), kv.getQualifierLength(), PhoenixDatabaseMetaData.TABLE_SEQ_NUM_BYTES, 0, PhoenixDatabaseMetaData.TABLE_SEQ_NUM_BYTES.length) == 0) {
-                    return PDataType.LONG.getCodec().decodeLong(kv.getBuffer(), kv.getValueOffset(), SortOrder.getDefault());
+            for (Cell kv : kvs) { // list is not ordered, so search. TODO: we could potentially assume the position
+                if (Bytes.compareTo(kv.getQualifierArray(), kv.getQualifierOffset(), kv.getQualifierLength(), PhoenixDatabaseMetaData.TABLE_SEQ_NUM_BYTES, 0, PhoenixDatabaseMetaData.TABLE_SEQ_NUM_BYTES.length) == 0) {
+                    return PDataType.LONG.getCodec().decodeLong(kv.getValueArray(), kv.getValueOffset(), SortOrder.getDefault());
                 }
             }
         }
@@ -165,7 +165,7 @@ public class MetaDataUtil {
    * Get the mutation who's qualifier matches the passed key
    * <p>
    * We need to pass in an {@link ImmutableBytesPtr} to pass the result back to make life easier
-   * when dealing with a regular {@link KeyValue} vs. a {@link ClientKeyValue} as the latter doesn't
+   * when dealing with a regular {@link KeyValue} vs. a custom KeyValue as the latter may not
    * support things like {@link KeyValue#getBuffer()}
    * @param headerRow mutation to check
    * @param key to check
@@ -175,9 +175,10 @@ public class MetaDataUtil {
    */
   public static boolean getMutationValue(Mutation headerRow, byte[] key,
       KeyValueBuilder builder, ImmutableBytesWritable ptr) {
-        List<KeyValue> kvs = headerRow.getFamilyMap().get(PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES);
+        List<Cell> kvs = headerRow.getFamilyCellMap().get(PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES);
         if (kvs != null) {
-            for (KeyValue kv : kvs) {
+            for (Cell cell : kvs) {
+                KeyValue kv = org.apache.hadoop.hbase.KeyValueUtil.ensureKeyValue(cell);
                 if (builder.compareQualifier(kv, key, 0, key.length) ==0) {
                     builder.getValueAsPtr(kv, ptr);
                     return true;
@@ -208,7 +209,7 @@ public class MetaDataUtil {
     }    
 
     public static long getClientTimeStamp(Mutation m) {
-        Collection<List<KeyValue>> kvs = m.getFamilyMap().values();
+        Collection<List<Cell>> kvs = m.getFamilyCellMap().values();
         // Empty if Mutation is a Delete
         // TODO: confirm that Delete timestamp is reset like Put
         return kvs.isEmpty() ? m.getTimeStamp() : kvs.iterator().next().get(0).getTimestamp();

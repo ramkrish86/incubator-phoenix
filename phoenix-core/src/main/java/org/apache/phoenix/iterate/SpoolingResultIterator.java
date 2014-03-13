@@ -28,7 +28,6 @@ import java.sql.SQLException;
 import java.util.List;
 
 import org.apache.commons.io.output.DeferredFileOutputStream;
-import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.compile.StatementContext;
@@ -40,6 +39,7 @@ import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.schema.tuple.ResultTuple;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.ResultUtil;
 import org.apache.phoenix.util.ServerUtil;
 import org.apache.phoenix.util.TupleUtil;
 
@@ -184,7 +184,7 @@ public class SpoolingResultIterator implements PeekingResultIterator {
             offset += WritableUtils.getVIntSize(resultSize);
             ImmutableBytesWritable value = new ImmutableBytesWritable(bytes,offset,resultSize);
             offset += resultSize;
-            Tuple result = new ResultTuple(new Result(value));
+            Tuple result = new ResultTuple(ResultUtil.toResult(value));
             return next = result;
         }
         
@@ -278,7 +278,7 @@ public class SpoolingResultIterator implements PeekingResultIterator {
                 offset += bytesRead;
                 totalBytesRead += bytesRead;
             }
-            next = new ResultTuple(new Result(new ImmutableBytesWritable(buffer,0,length)));
+            next = new ResultTuple(ResultUtil.toResult(new ImmutableBytesWritable(buffer,0,length)));
             return next;
         }
         

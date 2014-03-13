@@ -23,6 +23,8 @@ import java.io.IOException;
 
 import org.apache.hadoop.hbase.filter.FilterBase;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.util.Writables;
+import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.ExpressionType;
@@ -38,7 +40,7 @@ import org.apache.phoenix.util.ServerUtil;
  * 
  * @since 0.1
  */
-abstract public class BooleanExpressionFilter extends FilterBase {
+abstract public class BooleanExpressionFilter extends FilterBase implements Writable {
 
     protected Expression expression;
     private ImmutableBytesWritable tempPtr = new ImmutableBytesWritable();
@@ -110,7 +112,12 @@ abstract public class BooleanExpressionFilter extends FilterBase {
             ServerUtil.throwIOException("BooleanExpressionFilter failed during writing", t);
         }
     }
-    
+
+    @Override
+    public byte[] toByteArray() throws IOException {
+        return Writables.getBytes(this);
+    }
+
     @Override
     public void reset() {
         expression.reset();

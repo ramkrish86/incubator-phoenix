@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.Type;
@@ -237,7 +238,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             }
 
             @Override
-            public boolean next(List<KeyValue> results) throws IOException {
+            public boolean next(List<Cell> results) throws IOException {
                 try {
                     if (isFilterDone()) {
                         return false;
@@ -262,6 +263,11 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 } finally {
                     chunk.close();                }
             }
+            
+            @Override
+            public long getMaxResultSize() {
+                return s.getMaxResultSize();
+            }
         };
     }
         
@@ -278,7 +284,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
         return new RegionScanner() {
 
             @Override
-            public boolean next(List<KeyValue> results) throws IOException {
+            public boolean next(List<Cell> results) throws IOException {
                 try {
                     return s.next(results);
                 } catch (Throwable t) {
@@ -288,29 +294,9 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             }
 
             @Override
-            public boolean next(List<KeyValue> results, String metric) throws IOException {
-                try {
-                    return s.next(results, metric);
-                } catch (Throwable t) {
-                    ServerUtil.throwIOException(c.getEnvironment().getRegion().getRegionNameAsString(), t);
-                    return false; // impossible
-                }
-            }
-
-            @Override
-            public boolean next(List<KeyValue> result, int limit) throws IOException {
+            public boolean next(List<Cell> result, int limit) throws IOException {
                 try {
                     return s.next(result, limit);
-                } catch (Throwable t) {
-                    ServerUtil.throwIOException(c.getEnvironment().getRegion().getRegionNameAsString(), t);
-                    return false; // impossible
-                }
-            }
-
-            @Override
-            public boolean next(List<KeyValue> result, int limit, String metric) throws IOException {
-                try {
-                    return s.next(result, limit, metric);
                 } catch (Throwable t) {
                     ServerUtil.throwIOException(c.getEnvironment().getRegion().getRegionNameAsString(), t);
                     return false; // impossible
@@ -328,7 +314,7 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             }
 
             @Override
-            public boolean isFilterDone() {
+            public boolean isFilterDone() throws IOException {
                 return s.isFilterDone();
             }
 
@@ -343,9 +329,9 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             }
 
             @Override
-            public boolean nextRaw(List<KeyValue> result, String metric) throws IOException {
+            public boolean nextRaw(List<Cell> result) throws IOException {
                 try {
-                    boolean next = s.nextRaw(result, metric);
+                    boolean next = s.nextRaw(result);
                     if(result.size() == 0) {
                         return next;
                     } else if((arrayFuncRefs != null && arrayFuncRefs.length == 0) || arrayKVRefs.size() == 0) {
@@ -359,12 +345,10 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 }
             }
 
-            
-
             @Override
-            public boolean nextRaw(List<KeyValue> result, int limit, String metric) throws IOException {
+            public boolean nextRaw(List<Cell> result, int limit) throws IOException {
                 try {
-                    boolean next = s.nextRaw(result, limit, metric);
+                    boolean next = s.nextRaw(result, limit);
                     if (result.size() == 0) {
                         return next;
                     } else if ((arrayFuncRefs != null && arrayFuncRefs.length == 0) || arrayKVRefs.size() == 0) { 
@@ -380,19 +364,21 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
             }
 
             private void replaceArrayIndexElement(final List<KeyValueColumnExpression> arrayKVRefs,
-                    final Expression[] arrayFuncRefs, List<KeyValue> result) {
+                    final Expression[] arrayFuncRefs, List<Cell> result) {
                 MultiKeyValueTuple tuple = new MultiKeyValueTuple(result);
                 // The size of both the arrays would be same?
                 // Using KeyValueSchema to set and retrieve the value
                 // collect the first kv to get the row
-                KeyValue rowKv = result.get(0);
+                Cell rowKv = result.get(0);
                 for (int i = 0; i < arrayKVRefs.size(); i++) {
                     KeyValueColumnExpression kvExp = arrayKVRefs.get(i);
                     if (kvExp.evaluate(tuple, ptr)) {
                         for (int idx = tuple.size() - 1; idx >= 0; idx--) {
-                            KeyValue kv = tuple.getValue(idx);
-                            if (Bytes.equals(kvExp.getColumnFamily(), kv.getFamily())
-                                    && Bytes.equals(kvExp.getColumnName(), kv.getQualifier())) {
+                        	Cell kv = tuple.getValue(idx);
+                            if (Bytes.equals(kvExp.getColumnFamily(), 0, kvExp.getColumnFamily().length, 
+                            		kv.getFamilyArray(), kv.getFamilyOffset(), kv.getFamilyLength())
+                                && Bytes.equals(kvExp.getColumnName(), 0, kvExp.getColumnName().length, 
+                                		kv.getQualifierArray(), kv.getQualifierOffset(), kv.getQualifierLength())) {
                                 // remove the kv that has the full array values.
                                 result.remove(idx);
                                 break;
@@ -403,11 +389,16 @@ public class ScanRegionObserver extends BaseScannerRegionObserver {
                 byte[] value = kvSchema.toBytes(tuple, arrayFuncRefs,
                         kvSchemaBitSet, ptr);
                 // Add a dummy kv with the exact value of the array index
-                result.add(new KeyValue(rowKv.getBuffer(), rowKv.getRowOffset(), rowKv.getRowLength(),
+                result.add(new KeyValue(rowKv.getRowArray(), rowKv.getRowOffset(), rowKv.getRowLength(),
                         QueryConstants.ARRAY_VALUE_COLUMN_FAMILY, 0, QueryConstants.ARRAY_VALUE_COLUMN_FAMILY.length,
                         QueryConstants.ARRAY_VALUE_COLUMN_QUALIFIER, 0,
                         QueryConstants.ARRAY_VALUE_COLUMN_QUALIFIER.length, HConstants.LATEST_TIMESTAMP,
-                        Type.codeToType(rowKv.getType()), value, 0, value.length));
+                        Type.codeToType(rowKv.getTypeByte()), value, 0, value.length));
+            }
+            
+            @Override
+            public long getMaxResultSize() {
+                return s.getMaxResultSize();
             }
         };
     }

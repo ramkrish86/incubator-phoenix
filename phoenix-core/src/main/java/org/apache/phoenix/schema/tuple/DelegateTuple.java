@@ -17,7 +17,7 @@
  */
 package org.apache.phoenix.schema.tuple;
 
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 
 public class DelegateTuple implements Tuple {
@@ -43,12 +43,12 @@ public class DelegateTuple implements Tuple {
     }
 
     @Override
-    public KeyValue getValue(int index) {
+    public Cell getValue(int index) {
         return delegate.getValue(index);
     }
 
     @Override
-    public KeyValue getValue(byte[] family, byte[] qualifier) {
+    public Cell getValue(byte[] family, byte[] qualifier) {
         return delegate.getValue(family, qualifier);
     }
 
