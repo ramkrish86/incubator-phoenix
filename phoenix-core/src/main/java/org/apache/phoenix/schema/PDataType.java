@@ -6390,6 +6390,11 @@ public enum PDataType {
             SortOrder expectedModifier) {
         coerceBytes(ptr, null, actualType, null, null, actualModifier, null, null, expectedModifier);
     }
+    
+    public final void coerceBytes(ImmutableBytesWritable ptr, PDataType actualType, SortOrder actualModifier,
+            SortOrder expectedModifier, Integer desiredMaxLength) {
+        coerceBytes(ptr, null, actualType, null, null, actualModifier, desiredMaxLength, null, expectedModifier);
+    }
 
     private static Void throwConstraintViolationException(PDataType source, PDataType target) {
         throw new ConstraintViolationException(source + " cannot be coerced to " + target);

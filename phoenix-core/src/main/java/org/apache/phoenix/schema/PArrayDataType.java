@@ -210,24 +210,28 @@ public class PArrayDataType {
 		return true;
 	}
 	
-	public void coerceBytes(ImmutableBytesWritable ptr, Object value, PDataType actualType, Integer maxLength, Integer scale,
-            Integer desiredMaxLength, Integer desiredScale, PDataType desiredType, 
+    public void coerceBytes(ImmutableBytesWritable ptr, Object value, PDataType actualType, Integer maxLength,
+            Integer scale, Integer desiredMaxLength, Integer desiredScale, PDataType desiredType,
             SortOrder actualModifer, SortOrder expectedModifier) {
         if (ptr.getLength() == 0) { // a zero length ptr means null which will not be coerced to anything different
             return;
         }
-        if ((Objects.equal(maxLength, desiredMaxLength) || maxLength == null || desiredMaxLength == null)
-                && actualType.isBytesComparableWith(desiredType)
-                && actualType.isFixedWidth() == desiredType.isFixedWidth() && actualModifer == expectedModifier) { 
-            return; 
-        }
         PDataType baseType = PDataType.fromTypeId(actualType.getSqlType() - PDataType.ARRAY_TYPE_BASE);
         PDataType desiredBaseType = PDataType.fromTypeId(desiredType.getSqlType() - PDataType.ARRAY_TYPE_BASE);
+        if ((Objects.equal(maxLength, desiredMaxLength) || maxLength == null || desiredMaxLength == null)
+                && actualType.isBytesComparableWith(desiredType)
+                && baseType.isFixedWidth() == desiredBaseType.isFixedWidth() && actualModifer == expectedModifier) { 
+            return; 
+        }
         if (value == null && actualType != desiredType) {
             value = toObject(ptr.get(), ptr.getOffset(), ptr.getLength(), baseType, actualModifer, maxLength,
                     desiredScale, desiredBaseType);
-            baseType = desiredBaseType;
             PhoenixArray pArr = (PhoenixArray)value;
+            // VARCHAR <=> CHAR
+            if(baseType.isFixedWidth() != desiredBaseType.isFixedWidth()) {
+                pArr = new PhoenixArray(pArr, desiredMaxLength);
+            }
+            baseType = desiredBaseType;
             ptr.set(toBytes(pArr, baseType, expectedModifier));
         } else {
             PhoenixArray pArr = (PhoenixArray)value;

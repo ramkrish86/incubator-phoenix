@@ -642,7 +642,7 @@ public class ArrayIT extends BaseClientManagedTimeIT {
         stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?)");
         stmt.setString(1, "a");
         String[] s = new String[] { "1", "2" };
-        Array array = conn.createArrayOf("VARCHAR", s);
+        PhoenixArray array = (PhoenixArray)conn.createArrayOf("VARCHAR", s);
         stmt.setArray(2, array);
         stmt.execute();
         conn.commit();
@@ -653,8 +653,10 @@ public class ArrayIT extends BaseClientManagedTimeIT {
         rs = conn.createStatement().executeQuery("SELECT CAST(a AS CHAR ARRAY) FROM t");
         assertTrue(rs.next());
         PhoenixArray arr = (PhoenixArray)rs.getArray(1);
-        assertEquals(array, arr);
-        conn.close();
+        String[] array2 = (String[])array.getArray();
+        String[] array3 = (String[])arr.getArray();
+        assertEquals(array2[0], array3[0]);
+        assertEquals(array2[1], array3[1]);
         conn.close();
     }
 
