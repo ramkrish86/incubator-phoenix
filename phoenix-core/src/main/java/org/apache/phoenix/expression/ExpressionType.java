@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -30,6 +28,7 @@ import org.apache.phoenix.expression.function.CeilTimestampExpression;
 import org.apache.phoenix.expression.function.CoalesceFunction;
 import org.apache.phoenix.expression.function.CountAggregateFunction;
 import org.apache.phoenix.expression.function.DistinctCountAggregateFunction;
+import org.apache.phoenix.expression.function.ExternalSqlTypeIdFunction;
 import org.apache.phoenix.expression.function.FloorDateExpression;
 import org.apache.phoenix.expression.function.FloorDecimalExpression;
 import org.apache.phoenix.expression.function.FloorFunction;
@@ -65,6 +64,7 @@ import org.apache.phoenix.expression.function.ToNumberFunction;
 import org.apache.phoenix.expression.function.TrimFunction;
 import org.apache.phoenix.expression.function.TruncFunction;
 import org.apache.phoenix.expression.function.UpperFunction;
+import org.apache.phoenix.expression.function.TimezoneOffsetFunction;
 
 import com.google.common.collect.Maps;
 
@@ -73,8 +73,8 @@ import com.google.common.collect.Maps;
  * Enumeration of all Expression types that may be evaluated on the server-side.
  * Used during serialization and deserialization to pass Expression between client
  * and server.
+ *  
  *
- * 
  * @since 0.1
  */
 public enum ExpressionType {
@@ -153,7 +153,9 @@ public enum ExpressionType {
     ArrayIndexFunction(ArrayIndexFunction.class),
     ArrayLengthFunction(ArrayLengthFunction.class),
     ArrayConstructorExpression(ArrayConstructorExpression.class),
-    SQLViewTypeFunction(SQLViewTypeFunction.class);
+    SQLViewTypeFunction(SQLViewTypeFunction.class),
+    ExternalSqlTypeIdFunction(ExternalSqlTypeIdFunction.class),
+    TimezoneOffsetFunction(TimezoneOffsetFunction.class);
     ExpressionType(Class<? extends Expression> clazz) {
         this.clazz = clazz;
     }

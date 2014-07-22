@@ -136,7 +136,7 @@ import java.util.Stack;
 import java.sql.SQLException;
 import org.apache.phoenix.expression.function.CountAggregateFunction;
 import org.apache.phoenix.query.QueryConstants;
-import org.apache.phoenix.schema.ColumnModifier;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.IllegalDataException;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PIndexState;
@@ -361,7 +361,7 @@ create_table_node returns [CreateTableStatement ret]
     :   CREATE TABLE (IF NOT ex=EXISTS)? t=from_table_name 
         (LPAREN c=column_defs (pk=pk_constraint)? RPAREN)
         (p=fam_properties)?
-        (SPLIT ON s=list_expressions)?
+        (SPLIT ON s=value_expression_list)?
         {ret = factory.createTable(t, p, c, pk, s, PTableType.TABLE, ex!=null, null, null, getBindCount()); }
     ;
 
@@ -371,7 +371,7 @@ create_view_node returns [CreateTableStatement ret]
         (LPAREN c=column_defs (pk=pk_constraint)? RPAREN)?
         ( AS SELECT ASTERISK
           FROM bt=from_table_name
-          (WHERE w=condition)? )?
+          (WHERE w=expression)? )?
         (p=fam_properties)?
         { ret = factory.createTable(t, p, c, pk, null, PTableType.VIEW, ex!=null, bt==null ? t : bt, w, getBindCount()); }
     ;
@@ -382,7 +382,7 @@ create_index_node returns [CreateIndexStatement ret]
         (LPAREN pk=index_pk_constraint RPAREN)
         (INCLUDE (LPAREN icrefs=column_names RPAREN))?
         (p=fam_properties)?
-        (SPLIT ON v=list_expressions)?
+        (SPLIT ON v=value_expression_list)?
         {ret = factory.createIndex(i, factory.namedTable(null,t), pk, icrefs, v, p, ex!=null, getBindCount()); }
     ;
 
@@ -407,29 +407,29 @@ drop_sequence_node returns [DropSequenceStatement ret]
     ;
 
 pk_constraint returns [PrimaryKeyConstraint ret]
-    :   COMMA? CONSTRAINT n=identifier PRIMARY KEY LPAREN cols=col_name_with_mod_list RPAREN { $ret = factory.primaryKey(n,cols); }
+    :   COMMA? CONSTRAINT n=identifier PRIMARY KEY LPAREN cols=col_name_with_sort_order_list RPAREN { $ret = factory.primaryKey(n,cols); }
     ;
 
-col_name_with_mod_list returns [List<Pair<ColumnName, ColumnModifier>> ret]
-@init{ret = new ArrayList<Pair<ColumnName, ColumnModifier>>(); }
-    :   p=col_name_with_mod {$ret.add(p);}  (COMMA p = col_name_with_mod {$ret.add(p);} )*
+col_name_with_sort_order_list returns [List<Pair<ColumnName, SortOrder>> ret]
+@init{ret = new ArrayList<Pair<ColumnName, SortOrder>>(); }
+    :   p=col_name_with_sort_order {$ret.add(p);}  (COMMA p = col_name_with_sort_order {$ret.add(p);} )*
 ;
 
-col_name_with_mod returns [Pair<ColumnName, ColumnModifier> ret]
-    :   f=identifier (order=ASC|order=DESC)? {$ret = Pair.newPair(factory.columnName(f), order == null ? null : ColumnModifier.fromDDLValue(order.getText()));}
+col_name_with_sort_order returns [Pair<ColumnName, SortOrder> ret]
+    :   f=identifier (order=ASC|order=DESC)? {$ret = Pair.newPair(factory.columnName(f), order == null ? SortOrder.getDefault() : SortOrder.fromDDLValue(order.getText()));}
 ;
 
 index_pk_constraint returns [PrimaryKeyConstraint ret]
-    :   cols = col_def_name_with_mod_list {$ret = factory.primaryKey(null, cols); }
+    :   cols = col_def_name_with_sort_order_list {$ret = factory.primaryKey(null, cols); }
     ;
 
-col_def_name_with_mod_list returns [List<Pair<ColumnName, ColumnModifier>> ret]
-@init{ret = new ArrayList<Pair<ColumnName, ColumnModifier>>(); }
-    :   p=col_def_name_with_mod {$ret.add(p);}  (COMMA p = col_def_name_with_mod {$ret.add(p);} )*
+col_def_name_with_sort_order_list returns [List<Pair<ColumnName, SortOrder>> ret]
+@init{ret = new ArrayList<Pair<ColumnName, SortOrder>>(); }
+    :   p=col_def_name_with_sort_order {$ret.add(p);}  (COMMA p = col_def_name_with_sort_order {$ret.add(p);} )*
 ;
 
-col_def_name_with_mod returns [Pair<ColumnName, ColumnModifier> ret]
-    :   c=column_name (order=ASC|order=DESC)? {$ret = Pair.newPair(c, order == null ? null : ColumnModifier.fromDDLValue(order.getText()));}
+col_def_name_with_sort_order returns [Pair<ColumnName, SortOrder> ret]
+    :   c=column_name (order=ASC|order=DESC)? {$ret = Pair.newPair(c, order == null ? SortOrder.getDefault() : SortOrder.fromDDLValue(order.getText()));}
 ;
 
 fam_properties returns [ListMultimap<String,Pair<String,Object>> ret]
@@ -497,12 +497,12 @@ column_defs returns [List<ColumnDef> ret]
 ;
 
 column_def returns [ColumnDef ret]
-    :   c=column_name dt=identifier (LPAREN l=NUMBER (COMMA s=NUMBER)? RPAREN)? ar=ARRAY? (lsq=LSQUARE (a=NUMBER)? RSQUARE)? (n=NOT? NULL)? (pk=PRIMARY KEY (order=ASC|order=DESC)?)?
-        { $ret = factory.columnDef(c, dt, ar != null || lsq != null, a == null ? null :  Integer.parseInt( a.getText() ), n==null, 
+    :   c=column_name dt=identifier (LPAREN l=NUMBER (COMMA s=NUMBER)? RPAREN)? ar=ARRAY? (lsq=LSQUARE (a=NUMBER)? RSQUARE)? (nn=NOT? n=NULL)? (pk=PRIMARY KEY (order=ASC|order=DESC)?)?
+        { $ret = factory.columnDef(c, dt, ar != null || lsq != null, a == null ? null :  Integer.parseInt( a.getText() ), nn!=null ? Boolean.FALSE : n!=null ? Boolean.TRUE : null, 
             l == null ? null : Integer.parseInt( l.getText() ),
             s == null ? null : Integer.parseInt( s.getText() ),
             pk != null, 
-            order == null ? null : ColumnModifier.fromDDLValue(order.getText()) ); }
+            order == null ? SortOrder.getDefault() : SortOrder.fromDDLValue(order.getText()) ); }
     ;
 
 dyn_column_defs returns [List<ColumnDef> ret]
@@ -512,20 +512,20 @@ dyn_column_defs returns [List<ColumnDef> ret]
 
 dyn_column_def returns [ColumnDef ret]
     :   c=column_name dt=identifier (LPAREN l=NUMBER (COMMA s=NUMBER)? RPAREN)? ar=ARRAY? (lsq=LSQUARE (a=NUMBER)? RSQUARE)?
-        {$ret = factory.columnDef(c, dt, ar != null || lsq != null, a == null ? null :  Integer.parseInt( a.getText() ), true,
+        {$ret = factory.columnDef(c, dt, ar != null || lsq != null, a == null ? null :  Integer.parseInt( a.getText() ), Boolean.TRUE,
             l == null ? null : Integer.parseInt( l.getText() ),
             s == null ? null : Integer.parseInt( s.getText() ),
             false, 
-            null); }
+            SortOrder.getDefault()); }
     ;
 
 dyn_column_name_or_def returns [ColumnDef ret]
     :   c=column_name (dt=identifier (LPAREN l=NUMBER (COMMA s=NUMBER)? RPAREN)? ar=ARRAY? (lsq=LSQUARE (a=NUMBER)? RSQUARE)? )? 
-        {$ret = factory.columnDef(c, dt, ar != null || lsq != null, a == null ? null :  Integer.parseInt( a.getText() ), true,
+        {$ret = factory.columnDef(c, dt, ar != null || lsq != null, a == null ? null :  Integer.parseInt( a.getText() ), Boolean.TRUE,
             l == null ? null : Integer.parseInt( l.getText() ),
             s == null ? null : Integer.parseInt( s.getText() ),
             false, 
-            null); }
+            SortOrder.getDefault()); }
     ;
 
 select_expression returns [SelectStatement ret]
@@ -541,9 +541,9 @@ select_node returns [SelectStatement ret]
 @init{ contextStack.push(new ParseContext()); }
     :   (d=DISTINCT | ALL)? sel=select_list
         FROM from=parseFrom
-        (WHERE where=condition)?
+        (WHERE where=expression)?
         (GROUP BY group=group_by)?
-        (HAVING having=condition)?
+        (HAVING having=expression)?
         (ORDER BY order=order_by)?
         (LIMIT l=limit)?
         { ParseContext context = contextStack.pop(); $ret = factory.select(from, null, d!=null, sel, where, group, having, order, l, getBindCount(), context.isAggregate()); }
@@ -551,7 +551,6 @@ select_node returns [SelectStatement ret]
 
 // Parse a full select expression structure.
 hinted_select_node returns [SelectStatement ret]
-@init{ contextStack.push(new ParseContext()); }
     :   (hint=hintClause)? 
         s=select_node
         { $ret = factory.select(s, hint); }
@@ -561,7 +560,7 @@ hinted_select_node returns [SelectStatement ret]
 upsert_node returns [UpsertStatement ret]
     :   UPSERT (hint=hintClause)? INTO t=from_table_name
         (LPAREN p=upsert_column_refs RPAREN)?
-        ((VALUES LPAREN v=expression_terms RPAREN) | s=select_expression)
+        ((VALUES LPAREN v=one_or_more_expressions RPAREN) | s=select_expression)
         {ret = factory.upsert(factory.namedTable(null,t,p == null ? null : p.getFirst()), hint, p == null ? null : p.getSecond(), v, s, getBindCount()); }
     ;
 
@@ -574,7 +573,7 @@ upsert_column_refs returns [Pair<List<ColumnDef>,List<ColumnName>> ret]
 // Parse a full delete expression structure.
 delete_node returns [DeleteStatement ret]
     :   DELETE (hint=hintClause)? FROM t=from_table_name
-        (WHERE v=condition)?
+        (WHERE v=expression)?
         (ORDER BY order=order_by)?
         (LIMIT l=limit)?
         {ret = factory.delete(factory.namedTable(null,t), hint, v, order, l, getBindCount()); }
@@ -600,6 +599,7 @@ select_list returns [List<AliasedNode> ret]
 selectable returns [AliasedNode ret]
     :   field=expression (a=parseAlias)? { $ret = factory.aliasedNode(a, field); }
     | 	familyName=identifier DOT ASTERISK { $ret = factory.aliasedNode(null, factory.family(familyName));} // i.e. the 'cf.*' in 'select cf.* from' cf being column family of an hbase table    
+    |   s=identifier DOT t=identifier DOT ASTERISK { $ret = factory.aliasedNode(null, factory.tableWildcard(factory.table(s, t))); }
     ;
 
 
@@ -628,23 +628,28 @@ parseOrderByField returns [OrderByNode ret]
 
 parseFrom returns [List<TableNode> ret]
 @init{ret = new ArrayList<TableNode>(4); }
-    :   t=table_ref {$ret.add(t);} (s=sub_table_ref { $ret.add(s); })*
-    ;
-    
-sub_table_ref returns [TableNode ret]
-    :   COMMA t=table_ref { $ret = t; }
-    |   t=join_spec { $ret = t; }
+    :   t=table_ref {$ret.add(t);} (COMMA s=table_ref { $ret.add(s); })*
     ;
 
 table_ref returns [TableNode ret]
+    : t=single_table_ref p=join_parts { $ret = factory.table(t, p); }
+    ;
+
+single_table_ref returns [TableNode ret]
     :   n=bind_name ((AS)? alias=identifier)? { $ret = factory.bindTable(alias, factory.table(null,n)); } // TODO: review
     |   t=from_table_name ((AS)? alias=identifier)? (LPAREN cdefs=dyn_column_defs RPAREN)? { $ret = factory.namedTable(alias,t,cdefs); }
     |   LPAREN SELECT s=hinted_select_node RPAREN ((AS)? alias=identifier)? { $ret = factory.derivedTable(alias, s); }
     ;
 
-join_spec returns [TableNode ret]
-    :   j=join_type JOIN t=table_ref ON e=condition { $ret = factory.join(j, e, t); }
-    ;
+join_parts returns [List<JoinPartNode> ret]
+@init{ret = new ArrayList<JoinPartNode>(4); }
+	:	(p=join_part { $ret.add(p); })*
+	;
+
+join_part returns [JoinPartNode ret]
+	:	j=join_type JOIN r=single_table_ref ON e=expression { $ret = factory.joinPart(j, e, r); }
+	|	j=join_type JOIN LPAREN r=table_ref RPAREN ON e=expression { $ret = factory.joinPart(j, e, r); }
+	;
 
 join_type returns [JoinTableNode.JoinType ret]
     :   INNER?   { $ret = JoinTableNode.JoinType.Inner; }
@@ -657,43 +662,43 @@ parseAlias returns [String ret]
     :   AS? alias=parseNoReserved { $ret = alias; }
     ;
 
-// Parse a condition, such as used in a where clause - either a basic one, or an OR of (Single or AND) expressions
-condition returns [ParseNode ret]
-    :   e=condition_or { $ret = e; }
+// Parse a expression, such as used in a where clause - either a basic one, or an OR of (Single or AND) expressions
+expression returns [ParseNode ret]
+    :   e=or_expression { $ret = e; }
     ;
 
 // A set of OR'd simple expressions
-condition_or returns [ParseNode ret]
+or_expression returns [ParseNode ret]
 @init{List<ParseNode> l = new ArrayList<ParseNode>(4); }
-    :   i=condition_and {l.add(i);} (OR i=condition_and {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.or(l); }
+    :   i=and_expression {l.add(i);} (OR i=and_expression {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.or(l); }
     ;
 
 // A set of AND'd simple expressions
-condition_and returns [ParseNode ret]
+and_expression returns [ParseNode ret]
 @init{List<ParseNode> l = new ArrayList<ParseNode>(4); }
-    :   i=condition_not {l.add(i);} (AND i=condition_not {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.and(l); }
+    :   i=not_expression {l.add(i);} (AND i=not_expression {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.and(l); }
     ;
 
 // NOT or parenthesis 
-condition_not returns [ParseNode ret]
-    :   (NOT? boolean_expr ) => n=NOT? e=boolean_expr { $ret = n == null ? e : factory.not(e); }
-    |   n=NOT? LPAREN e=condition RPAREN { $ret = n == null ? e : factory.not(e); }
+not_expression returns [ParseNode ret]
+    :   (NOT? boolean_expression ) => n=NOT? e=boolean_expression { $ret = n == null ? e : factory.not(e); }
+    |   n=NOT? LPAREN e=expression RPAREN { $ret = n == null ? e : factory.not(e); }
     ;
 
-boolean_expr returns [ParseNode ret]
-    :   l=expression ((EQ r=expression {$ret = factory.equal(l,r); } )
-                  |  ((NOEQ1 | NOEQ2) r=expression {$ret = factory.notEqual(l,r); } )
-                  |  (LT r=expression {$ret = factory.lt(l,r); } )
-                  |  (GT r=expression {$ret = factory.gt(l,r); } )
-                  |  (LT EQ r=expression {$ret = factory.lte(l,r); } )
-                  |  (GT EQ r=expression {$ret = factory.gte(l,r); } )
+boolean_expression returns [ParseNode ret]
+    :   l=value_expression ((EQ r=value_expression {$ret = factory.equal(l,r); } )
+                  |  ((NOEQ1 | NOEQ2) r=value_expression {$ret = factory.notEqual(l,r); } )
+                  |  (LT r=value_expression {$ret = factory.lt(l,r); } )
+                  |  (GT r=value_expression {$ret = factory.gt(l,r); } )
+                  |  (LT EQ r=value_expression {$ret = factory.lte(l,r); } )
+                  |  (GT EQ r=value_expression {$ret = factory.gte(l,r); } )
                   |  (IS n=NOT? NULL {$ret = factory.isNull(l,n!=null); } )
-                  |  ( n=NOT? ((LIKE r=expression {$ret = factory.like(l,r,n!=null); } )
+                  |  ( n=NOT? ((LIKE r=value_expression {$ret = factory.like(l,r,n!=null); } )
                       |        (EXISTS LPAREN r=subquery_expression RPAREN {$ret = factory.exists(l,r,n!=null);} )
-                      |        (BETWEEN r1=expression AND r2=expression {$ret = factory.between(l,r1,r2,n!=null); } )
+                      |        (BETWEEN r1=value_expression AND r2=value_expression {$ret = factory.between(l,r1,r2,n!=null); } )
                       |        ((IN ((r=bind_expression {$ret = factory.inList(Arrays.asList(l,r),n!=null);} )
                                 | (LPAREN r=subquery_expression RPAREN {$ret = factory.in(l,r,n!=null);} )
-                                | (v=list_expressions {List<ParseNode> il = new ArrayList<ParseNode>(v.size() + 1); il.add(l); il.addAll(v); $ret = factory.inList(il,n!=null);})
+                                | (LPAREN v=one_or_more_expressions RPAREN {List<ParseNode> il = new ArrayList<ParseNode>(v.size() + 1); il.add(l); il.addAll(v); $ret = factory.inList(il,n!=null);})
                                 )))
                       ))
                    |  { $ret = l; } )
@@ -703,50 +708,50 @@ bind_expression  returns [BindParseNode ret]
     :   b=bind_name { $ret = factory.bind(b); }
     ;
     
-expression returns [ParseNode ret]
-    :   i=expression_add { $ret = i; }
+value_expression returns [ParseNode ret]
+    :   i=add_expression { $ret = i; }
     ;
 
-expression_add returns [ParseNode ret]
+add_expression returns [ParseNode ret]
 @init{List<ParseNode> l = new ArrayList<ParseNode>(4); }
-    :   i=expression_sub {l.add(i);} (PLUS i=expression_sub {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.add(l); }
+    :   i=subtract_expression {l.add(i);} (PLUS i=subtract_expression {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.add(l); }
     ;
 
-expression_sub returns [ParseNode ret]
+subtract_expression returns [ParseNode ret]
 @init{List<ParseNode> l = new ArrayList<ParseNode>(4); }
-    :   i=expression_concat {l.add(i);} (MINUS i=expression_concat {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.subtract(l); }
+    :   i=concat_expression {l.add(i);} (MINUS i=concat_expression {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.subtract(l); }
     ;
 
-expression_concat returns [ParseNode ret]
+concat_expression returns [ParseNode ret]
 @init{List<ParseNode> l = new ArrayList<ParseNode>(4); }
-    :   i=expression_mult {l.add(i);} (CONCAT i=expression_mult {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.concat(l); }
+    :   i=multiply_expression {l.add(i);} (CONCAT i=multiply_expression {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.concat(l); }
     ;
 
-expression_mult returns [ParseNode ret]
+multiply_expression returns [ParseNode ret]
 @init{List<ParseNode> l = new ArrayList<ParseNode>(4); }
-    :   i=expression_div {l.add(i);} (ASTERISK i=expression_div {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.multiply(l); }
+    :   i=divide_expression {l.add(i);} (ASTERISK i=divide_expression {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.multiply(l); }
     ;
 
-expression_div returns [ParseNode ret]
+divide_expression returns [ParseNode ret]
 @init{List<ParseNode> l = new ArrayList<ParseNode>(4); }
-    :   i=expression_negate {l.add(i);} (DIVIDE i=expression_negate {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.divide(l); }
+    :   i=negate_expression {l.add(i);} (DIVIDE i=negate_expression {l.add(i);})* { $ret = l.size() == 1 ? l.get(0) : factory.divide(l); }
     ;
 
-expression_negate returns [ParseNode ret]
-    :   m=MINUS? e=expression_term { $ret = m==null ? e : factory.negate(e); }
+negate_expression returns [ParseNode ret]
+    :   m=MINUS? e=array_expression { $ret = m==null ? e : factory.negate(e); }
     ;
 
 // The lowest level function, which includes literals, binds, but also parenthesized expressions, functions, and case statements.
-expression_term returns [ParseNode ret]
-    :   e=literal_or_bind_value { $ret = e; }
-    |   e=arrayable_expression_term (LSQUARE s=expression RSQUARE)?  { if (s == null) { $ret = e; } else { $ret = factory.arrayElemRef(Arrays.<ParseNode>asList(e,s)); } } 
+array_expression returns [ParseNode ret]
+    :   e=term (LSQUARE s=value_expression RSQUARE)?  { if (s == null) { $ret = e; } else { $ret = factory.arrayElemRef(Arrays.<ParseNode>asList(e,s)); } } 
 	;
 	    
-arrayable_expression_term returns [ParseNode ret]
-    :   field=identifier { $ret = factory.column(null,field,field); }
-    |   ex=ARRAY LSQUARE v=expression_terms RSQUARE {$ret = factory.upsertStmtArrayNode(v);}
+term returns [ParseNode ret]
+    :   e=literal_or_bind { $ret = e; }
+    |   field=identifier { $ret = factory.column(null,field,field); }
+    |   ex=ARRAY LSQUARE v=one_or_more_expressions RSQUARE {$ret = factory.upsertStmtArrayNode(v);}
     |   tableName=table_name DOT field=identifier { $ret = factory.column(tableName, field, field); }
-    |   field=identifier LPAREN l=expression_list RPAREN wg=(WITHIN GROUP LPAREN ORDER BY l2=expression_terms (a=ASC | DESC) RPAREN)?
+    |   field=identifier LPAREN l=zero_or_more_expressions RPAREN wg=(WITHIN GROUP LPAREN ORDER BY l2=one_or_more_expressions (a=ASC | DESC) RPAREN)?
         {
             FunctionParseNode f = wg==null ? factory.function(field, l) : factory.function(field,l,l2,a!=null);
             contextStack.peek().setAggregate(f.isAggregate());
@@ -761,14 +766,14 @@ arrayable_expression_term returns [ParseNode ret]
             contextStack.peek().setAggregate(f.isAggregate()); 
             $ret = f;
         } 
-    |   field=identifier LPAREN t=DISTINCT l=expression_list RPAREN 
+    |   field=identifier LPAREN t=DISTINCT l=zero_or_more_expressions RPAREN 
         {
             FunctionParseNode f = factory.functionDistinct(field, l);
             contextStack.peek().setAggregate(f.isAggregate());
             $ret = f;
         }
     |   e=case_statement { $ret = e; }
-    |   LPAREN l=expression_terms RPAREN 
+    |   LPAREN l=one_or_more_expressions RPAREN 
     	{ 
     		if(l.size() == 1) {
     			$ret = l.get(0);
@@ -777,18 +782,28 @@ arrayable_expression_term returns [ParseNode ret]
     			$ret = factory.rowValueConstructor(l);
     		}	 
     	}
-    |   CAST e=expression AS dt=identifier { $ret = factory.cast(e, dt); }
+    |   CAST LPAREN e=expression AS dt=identifier (LPAREN length=NUMBER (COMMA scale=NUMBER)? RPAREN)? ar=(ARRAY | (LSQUARE RSQUARE))? RPAREN
+        { $ret = factory.cast(e, dt,
+                     length == null ? null : Integer.parseInt(length.getText()),
+                     scale == null ? null : Integer.parseInt(scale.getText()),
+                     ar!=null);
+        }
     |   (n=NEXT | CURRENT) VALUE FOR s=from_table_name { $ret = n==null ? factory.currentValueFor(s) : factory.nextValueFor(s);}    
     ;
 
-expression_terms returns [List<ParseNode> ret]
+one_or_more_expressions returns [List<ParseNode> ret]
 @init{ret = new ArrayList<ParseNode>(); }
     :  e = expression {$ret.add(e);}  (COMMA e = expression {$ret.add(e);} )*
 ;
 
-expression_list returns [List<ParseNode> ret]
+zero_or_more_expressions returns [List<ParseNode> ret]
 @init{ret = new ArrayList<ParseNode>(); }
     :  (v = expression {$ret.add(v);})?  (COMMA v = expression {$ret.add(v);} )*
+;
+
+value_expression_list returns [List<ParseNode> ret]
+@init{ret = new ArrayList<ParseNode>(); }
+    :  LPAREN e = value_expression {$ret.add(e);}  (COMMA e = value_expression {$ret.add(e);} )* RPAREN
 ;
 
 index_name returns [NamedNode ret]
@@ -808,7 +823,7 @@ from_table_name returns [TableName ret]
     ;
     
 // The lowest level function, which includes literals, binds, but also parenthesized expressions, functions, and case statements.
-literal_or_bind_value returns [ParseNode ret]
+literal_or_bind returns [ParseNode ret]
     :   e=literal { $ret = e; }
     |   b=bind_name { $ret = factory.bind(b); }    
     ;
@@ -870,20 +885,9 @@ double_literal returns [LiteralParseNode ret]
         }
     ;
 
-list_expressions returns [List<ParseNode> ret]
-@init{ret = new ArrayList<ParseNode>(); }
-    :   LPAREN  v = expression {$ret.add(v);}  (COMMA v = expression {$ret.add(v);} )* RPAREN
-;
-
-// parse a field, if it might be a bind name.
-table returns [String ret]
-    :   b=bind_name { $ret = b; }
-    |   n=parseNoReserved { $ret = n; }
-    ;
-
 // Bind names are a colon followed by 1+ letter/digits/underscores, or '?' (unclear how Oracle acutally deals with this, but we'll just treat it as a special bind)
 bind_name returns [String ret]
-    :   bname=BIND_NAME { String bnameStr = bname.getText().substring(1); updateBind(bnameStr); $ret = bnameStr; } 
+    :   n=BIND_NAME { String bind = n.getText().substring(1); updateBind(bind); $ret = bind; } 
     |   QUESTION { $ret = nextBind(); } // TODO: only support this?
     ;
 
@@ -899,7 +903,7 @@ parseNoReserved returns [String ret]
 case_statement returns [ParseNode ret]
 @init{List<ParseNode> w = new ArrayList<ParseNode>(4);}
     : CASE e1=expression (WHEN e2=expression THEN t=expression {w.add(t);w.add(factory.equal(e1,e2));})+ (ELSE el=expression {w.add(el);})? END {$ret = factory.caseWhen(w);}
-    | CASE (WHEN c=condition THEN t=expression {w.add(t);w.add(c);})+ (ELSE el=expression {w.add(el);})? END {$ret = factory.caseWhen(w);}
+    | CASE (WHEN c=expression THEN t=expression {w.add(t);w.add(c);})+ (ELSE el=expression {w.add(el);})? END {$ret = factory.caseWhen(w);}
     ;
 
 // --------------------------------------

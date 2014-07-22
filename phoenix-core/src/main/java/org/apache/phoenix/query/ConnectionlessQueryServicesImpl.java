@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +17,7 @@
  */
 package org.apache.phoenix.query;
 
-import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES;
+import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.INDEX_STATE_BYTES;
 
 import java.sql.SQLException;
 import java.util.Collections;
@@ -31,15 +29,14 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.ServerName;
+import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
-import org.apache.hadoop.hbase.util.VersionInfo;
-import org.apache.phoenix.client.KeyValueBuilder;
 import org.apache.phoenix.compile.MutationPlan;
 import org.apache.phoenix.coprocessor.MetaDataProtocol;
 import org.apache.phoenix.coprocessor.MetaDataProtocol.MetaDataMutationResult;
@@ -47,6 +44,8 @@ import org.apache.phoenix.coprocessor.MetaDataProtocol.MutationCode;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.execute.MutationState;
+import org.apache.phoenix.hbase.index.util.GenericKeyValueBuilder;
+import org.apache.phoenix.hbase.index.util.KeyValueBuilder;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
 import org.apache.phoenix.schema.NewerTableAlreadyExistsException;
@@ -54,16 +53,22 @@ import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PIndexState;
 import org.apache.phoenix.schema.PMetaData;
 import org.apache.phoenix.schema.PMetaDataImpl;
+import org.apache.phoenix.schema.PName;
+import org.apache.phoenix.schema.PNameFactory;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTableImpl;
+import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.schema.PTableType;
+import org.apache.phoenix.schema.Sequence;
 import org.apache.phoenix.schema.SequenceAlreadyExistsException;
 import org.apache.phoenix.schema.SequenceKey;
 import org.apache.phoenix.schema.SequenceNotFoundException;
 import org.apache.phoenix.schema.TableAlreadyExistsException;
 import org.apache.phoenix.schema.TableNotFoundException;
 import org.apache.phoenix.schema.TableRef;
+import org.apache.phoenix.util.MetaDataUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
+import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.SchemaUtil;
 
 import com.google.common.collect.Maps;
@@ -81,13 +86,20 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     private PMetaData metaData;
     private final Map<SequenceKey, Long> sequenceMap = Maps.newHashMap();
     private KeyValueBuilder kvBuilder;
+    private volatile boolean initialized;
+    private volatile SQLException initializationException;
     
     public ConnectionlessQueryServicesImpl(QueryServices queryServices) {
         super(queryServices);
-        metaData = PMetaDataImpl.EMPTY_META_DATA;
-        // find the HBase version and use that to determine the KeyValueBuilder that should be used
-        String hbaseVersion = VersionInfo.getVersion();
-        this.kvBuilder = KeyValueBuilder.get(hbaseVersion);
+        metaData = newEmptyMetaData();
+        // Use KeyValueBuilder that builds real KeyValues, as our test utils require this
+        this.kvBuilder = GenericKeyValueBuilder.INSTANCE;
+    }
+
+    private PMetaData newEmptyMetaData() {
+        long maxSizeBytes = getProps().getLong(QueryServices.MAX_CLIENT_METADATA_CACHE_SIZE_ATTRIB,
+                QueryServicesOptions.DEFAULT_MAX_CLIENT_METADATA_CACHE_SIZE);
+        return new PMetaDataImpl(INITIAL_META_DATA_TABLE_CAPACITY, maxSizeBytes);
     }
 
     @Override
@@ -117,12 +129,18 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
             @Override
             public void updateStats(TableRef table) throws SQLException {
             }
+
+            @Override
+            public void clearStats() throws SQLException {
+            }
         };
     }
 
     @Override
     public List<HRegionLocation> getAllTableRegions(byte[] tableName) throws SQLException {
-        return Collections.singletonList(new HRegionLocation(new HRegionInfo(tableName, HConstants.EMPTY_START_ROW, HConstants.EMPTY_END_ROW),"localhost",-1));
+        return Collections.singletonList(new HRegionLocation(
+            new HRegionInfo(TableName.valueOf(tableName), HConstants.EMPTY_START_ROW, HConstants.EMPTY_END_ROW),
+            	ServerName.valueOf("localhost", HConstants.DEFAULT_REGIONSERVER_PORT,0), -1));
     }
 
     @Override
@@ -131,21 +149,21 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public PMetaData addColumn(String tableName, List<PColumn> columns, long tableTimeStamp, long tableSeqNum,
-            boolean isImmutableRows) throws SQLException {
-        return metaData = metaData.addColumn(tableName, columns, tableTimeStamp, tableSeqNum, isImmutableRows);
+    public PMetaData addColumn(PName tenantId, String tableName, List<PColumn> columns, long tableTimeStamp,
+            long tableSeqNum, boolean isImmutableRows) throws SQLException {
+        return metaData = metaData.addColumn(tenantId, tableName, columns, tableTimeStamp, tableSeqNum, isImmutableRows);
     }
 
     @Override
-    public PMetaData removeTable(String tableName)
+    public PMetaData removeTable(PName tenantId, String tableName)
             throws SQLException {
-        return metaData = metaData.removeTable(tableName);
+        return metaData = metaData.removeTable(tenantId, tableName);
     }
 
     @Override
-    public PMetaData removeColumn(String tableName, String familyName, String columnName, long tableTimeStamp,
-            long tableSeqNum) throws SQLException {
-        return metaData = metaData.removeColumn(tableName, familyName, columnName, tableTimeStamp, tableSeqNum);
+    public PMetaData removeColumn(PName tenantId, String tableName, String familyName, String columnName,
+            long tableTimeStamp, long tableSeqNum) throws SQLException {
+        return metaData = metaData.removeColumn(tenantId, tableName, familyName, columnName, tableTimeStamp, tableSeqNum);
     }
 
     
@@ -155,12 +173,13 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public MetaDataMutationResult getTable(byte[] tenantId, byte[] schemaBytes, byte[] tableBytes, long tableTimestamp, long clientTimestamp) throws SQLException {
+    public MetaDataMutationResult getTable(PName tenantId, byte[] schemaBytes, byte[] tableBytes, long tableTimestamp, long clientTimestamp) throws SQLException {
         // Return result that will cause client to use it's own metadata instead of needing
         // to get anything from the server (since we don't have a connection)
         try {
-            PTable table = metaData.getTable(SchemaUtil.getTableName(schemaBytes, tableBytes));
-            return new MetaDataMutationResult(MutationCode.TABLE_ALREADY_EXISTS, 0, table);
+            String fullTableName = SchemaUtil.getTableName(schemaBytes, tableBytes);
+            PTable table = metaData.getTable(new PTableKey(tenantId, fullTableName));
+            return new MetaDataMutationResult(MutationCode.TABLE_ALREADY_EXISTS, 0, table, true);
         } catch (TableNotFoundException e) {
             return new MetaDataMutationResult(MutationCode.TABLE_NOT_FOUND, 0, null);
         }
@@ -178,7 +197,7 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public MetaDataMutationResult addColumn(List<Mutation> tableMetaData, PTableType readOnly, List<Pair<byte[],Map<String,Object>>> families) throws SQLException {
+    public MetaDataMutationResult addColumn(List<Mutation> tableMetaData, List<Pair<byte[],Map<String,Object>>> families, PTable table) throws SQLException {
         return new MetaDataMutationResult(MutationCode.TABLE_ALREADY_EXISTS, 0, null);
     }
 
@@ -187,39 +206,62 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
         return new MetaDataMutationResult(MutationCode.TABLE_ALREADY_EXISTS, 0, null);
     }
 
+    // TODO: share this with ConnectionQueryServicesImpl
     @Override
     public void init(String url, Properties props) throws SQLException {
-        props = new Properties(props);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(MetaDataProtocol.MIN_SYSTEM_TABLE_TIMESTAMP));
-        PhoenixConnection metaConnection = new PhoenixConnection(this, url, props, PMetaDataImpl.EMPTY_META_DATA);
-        SQLException sqlE = null;
-        try {
-            try {
-                metaConnection.createStatement().executeUpdate(QueryConstants.CREATE_TABLE_METADATA);
-            } catch (TableAlreadyExistsException ignore) {
-                // Ignore, as this will happen if the SYSTEM.TABLE already exists at this fixed timestamp.
-                // A TableAlreadyExistsException is not thrown, since the table only exists *after* this fixed timestamp.
+        if (initialized) {
+            if (initializationException != null) {
+                throw initializationException;
             }
-            try {
-                metaConnection.createStatement().executeUpdate(QueryConstants.CREATE_SEQUENCE_METADATA);
-            } catch (NewerTableAlreadyExistsException ignore) {
-                // Ignore, as this will happen if the SYSTEM.SEQUENCE already exists at this fixed timestamp.
-                // A TableAlreadyExistsException is not thrown, since the table only exists *after* this fixed timestamp.
-            }
-        } catch (SQLException e) {
-            sqlE = e;
-        } finally {
-            try {
-                metaConnection.close();
-            } catch (SQLException e) {
-                if (sqlE != null) {
-                    sqlE.setNextException(e);
-                } else {
-                    sqlE = e;
+            return;
+        }
+        synchronized (this) {
+            if (initialized) {
+                if (initializationException != null) {
+                    throw initializationException;
                 }
+                return;
             }
-            if (sqlE != null) {
-                throw sqlE;
+            SQLException sqlE = null;
+            PhoenixConnection metaConnection = null;
+            try {
+                Properties scnProps = PropertiesUtil.deepCopy(props);
+                scnProps.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(MetaDataProtocol.MIN_SYSTEM_TABLE_TIMESTAMP));
+                scnProps.remove(PhoenixRuntime.TENANT_ID_ATTRIB);
+                metaConnection = new PhoenixConnection(this, url, scnProps, newEmptyMetaData());
+                try {
+                    metaConnection.createStatement().executeUpdate(QueryConstants.CREATE_TABLE_METADATA);
+                } catch (TableAlreadyExistsException ignore) {
+                    // Ignore, as this will happen if the SYSTEM.TABLE already exists at this fixed timestamp.
+                    // A TableAlreadyExistsException is not thrown, since the table only exists *after* this fixed timestamp.
+                }
+                try {
+                    metaConnection.createStatement().executeUpdate(QueryConstants.CREATE_SEQUENCE_METADATA);
+                } catch (NewerTableAlreadyExistsException ignore) {
+                    // Ignore, as this will happen if the SYSTEM.SEQUENCE already exists at this fixed timestamp.
+                    // A TableAlreadyExistsException is not thrown, since the table only exists *after* this fixed timestamp.
+                }
+            } catch (SQLException e) {
+                sqlE = e;
+            } finally {
+                try {
+                    if (metaConnection != null) metaConnection.close();
+                } catch (SQLException e) {
+                    if (sqlE != null) {
+                        sqlE.setNextException(e);
+                    } else {
+                        sqlE = e;
+                    }
+                } finally {
+                    try {
+                        if (sqlE != null) {
+                            initializationException = sqlE;
+                            throw sqlE;
+                        }
+                    } finally {
+                        initialized = true;
+                    }
+                }
             }
         }
     }
@@ -243,12 +285,18 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     public MetaDataMutationResult updateIndexState(List<Mutation> tableMetadata, String parentTableName) throws SQLException {
         byte[][] rowKeyMetadata = new byte[3][];
         SchemaUtil.getVarChars(tableMetadata.get(0).getRow(), rowKeyMetadata);
-        KeyValue newKV = tableMetadata.get(0).getFamilyMap().get(TABLE_FAMILY_BYTES).get(0);
-        PIndexState newState =  PIndexState.fromSerializedValue(newKV.getBuffer()[newKV.getValueOffset()]);
+        Mutation m = MetaDataUtil.getTableHeaderRow(tableMetadata);
+        ImmutableBytesWritable ptr = new ImmutableBytesWritable();
+        if (!MetaDataUtil.getMutationValue(m, INDEX_STATE_BYTES, kvBuilder, ptr)) {
+            throw new IllegalStateException();
+        }
+        PIndexState newState =  PIndexState.fromSerializedValue(ptr.get()[ptr.getOffset()]);
+        byte[] tenantIdBytes = rowKeyMetadata[PhoenixDatabaseMetaData.TENANT_ID_INDEX];
         String schemaName = Bytes.toString(rowKeyMetadata[PhoenixDatabaseMetaData.SCHEMA_NAME_INDEX]);
         String indexName = Bytes.toString(rowKeyMetadata[PhoenixDatabaseMetaData.TABLE_NAME_INDEX]);
         String indexTableName = SchemaUtil.getTableName(schemaName, indexName);
-        PTable index = metaData.getTable(indexTableName);
+        PName tenantId = tenantIdBytes.length == 0 ? null : PNameFactory.newName(tenantIdBytes);
+        PTable index = metaData.getTable(new PTableKey(tenantId, indexTableName));
         index = PTableImpl.makePTable(index,newState == PIndexState.USABLE ? PIndexState.ACTIVE : newState == PIndexState.UNUSABLE ? PIndexState.INACTIVE : newState);
         return new MetaDataMutationResult(MutationCode.TABLE_ALREADY_EXISTS, 0, index);
     }
@@ -268,7 +316,7 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public long createSequence(String tenantId, String schemaName, String sequenceName, long startWith, long incrementBy, int cacheSize, long timestamp)
+    public long createSequence(String tenantId, String schemaName, String sequenceName, long startWith, long incrementBy, long cacheSize, long timestamp)
             throws SQLException {
         SequenceKey key = new SequenceKey(tenantId, schemaName, sequenceName);
         if (sequenceMap.get(key) != null) {
@@ -288,8 +336,8 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public void reserveSequenceValues(List<SequenceKey> sequenceKeys, long timestamp, long[] values,
-            SQLException[] exceptions) throws SQLException {
+    public void validateSequences(List<SequenceKey> sequenceKeys, long timestamp, long[] values,
+            SQLException[] exceptions, Sequence.Action action) throws SQLException {
         int i = 0;
         for (SequenceKey key : sequenceKeys) {
             Long value = sequenceMap.get(key);
@@ -303,7 +351,7 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public void incrementSequenceValues(List<SequenceKey> sequenceKeys, long timestamp, long[] values,
+    public void incrementSequences(List<SequenceKey> sequenceKeys, long timestamp, long[] values,
             SQLException[] exceptions) throws SQLException {
         int i = 0;
         for (SequenceKey key : sequenceKeys) {
@@ -325,7 +373,7 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public long getSequenceValue(SequenceKey sequenceKey, long timestamp) throws SQLException {
+    public long currentSequenceValue(SequenceKey sequenceKey, long timestamp) throws SQLException {
         Long value = sequenceMap.get(sequenceKey);
         if (value == null) {
             throw new SQLExceptionInfo.Builder(SQLExceptionCode.CANNOT_CALL_CURRENT_BEFORE_NEXT_VALUE)
@@ -336,7 +384,7 @@ public class ConnectionlessQueryServicesImpl extends DelegateQueryServices imple
     }
 
     @Override
-    public void returnSequenceValues(List<SequenceKey> sequenceKeys, long timestamp, SQLException[] exceptions)
+    public void returnSequences(List<SequenceKey> sequenceKeys, long timestamp, SQLException[] exceptions)
             throws SQLException {
     }
 

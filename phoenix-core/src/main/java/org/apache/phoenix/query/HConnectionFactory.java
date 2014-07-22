@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,8 +17,9 @@
  */
 package org.apache.phoenix.query;
 
+import java.io.IOException;
+
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.ZooKeeperConnectionException;
 import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.HConnectionManager;
 
@@ -37,14 +36,14 @@ public interface HConnectionFactory {
      * @param configuration object
      * @return A HConnection instance
      */
-    HConnection createConnection(Configuration conf) throws ZooKeeperConnectionException;
+    HConnection createConnection(Configuration conf) throws IOException;
 
     /**
      * Default implementation.  Uses standard HBase HConnections.
      */
     static class HConnectionFactoryImpl implements HConnectionFactory {
         @Override
-        public HConnection createConnection(Configuration conf) throws ZooKeeperConnectionException {
+        public HConnection createConnection(Configuration conf) throws IOException {
             return HConnectionManager.createConnection(conf);
         }
     }

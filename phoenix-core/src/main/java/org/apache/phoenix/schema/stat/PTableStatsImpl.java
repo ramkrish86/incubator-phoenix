@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,14 +17,9 @@
  */
 package org.apache.phoenix.schema.stat;
 
-import java.io.DataOutput;
-import java.io.IOException;
 import java.util.Map;
-import java.util.Map.Entry;
 
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.io.WritableUtils;
 
 import com.google.common.collect.ImmutableMap;
 
@@ -52,19 +45,11 @@ public class PTableStatsImpl implements PTableStats {
     }
 
     @Override
-    public void write(DataOutput output) throws IOException {
-        if (regionGuidePosts == null) {
-            WritableUtils.writeVInt(output, 0);
-            return;
-        }
-        WritableUtils.writeVInt(output, regionGuidePosts.size());
-        for (Entry<String, byte[][]> entry : regionGuidePosts.entrySet()) {
-            WritableUtils.writeString(output, entry.getKey());
-            byte[][] value = entry.getValue();
-            WritableUtils.writeVInt(output, value.length);
-            for (int i=0; i<value.length; i++) {
-                Bytes.writeByteArray(output, value[i]);
-            }
-        }
+    public Map<String, byte[][]> getGuidePosts(){
+      if(regionGuidePosts != null) {
+        return ImmutableMap.copyOf(regionGuidePosts);
+      }
+      
+      return null;
     }
 }

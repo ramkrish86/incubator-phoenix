@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,6 +26,7 @@ import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
+import org.apache.phoenix.expression.AndExpression;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.KeyValueColumnExpression;
 import org.apache.phoenix.expression.LiteralExpression;
@@ -48,12 +47,14 @@ import org.apache.phoenix.schema.ColumnRef;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTableType;
+import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.TypeMismatchException;
 import org.apache.phoenix.util.ByteUtil;
 import org.apache.phoenix.util.ScanUtil;
 import org.apache.phoenix.util.SchemaUtil;
 
 import com.google.common.collect.Iterators;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 
@@ -70,6 +71,10 @@ public class WhereCompiler {
     private WhereCompiler() {
     }
 
+    public static Expression compile(StatementContext context, FilterableStatement statement) throws SQLException {
+        return compile(context, statement, null);
+    }
+    
     /**
      * Pushes where clause filter expressions into scan by building and setting a filter.
      * @param context the shared context during query compilation
@@ -80,16 +85,8 @@ public class WhereCompiler {
      * @throws ColumnNotFoundException if column name could not be resolved
      * @throws AmbiguousColumnException if an unaliased column name is ambiguous across multiple tables
      */
-    public static Expression compile(StatementContext context, FilterableStatement statement) throws SQLException {
-        return compileWhereClause(context, statement, Sets.<Expression>newHashSet());
-    }
-
-    /**
-     * Used for testing to get access to the expressions that were used to form the start/stop key of the scan
-     * @param statement TODO
-     */
-    public static Expression compileWhereClause(StatementContext context, FilterableStatement statement,
-            Set<Expression> extractedNodes) throws SQLException {
+    public static Expression compile(StatementContext context, FilterableStatement statement, ParseNode viewWhere) throws SQLException {
+        Set<Expression> extractedNodes = Sets.<Expression>newHashSet();
         WhereExpressionCompiler whereCompiler = new WhereExpressionCompiler(context);
         ParseNode where = statement.getWhere();
         Expression expression = where == null ? LiteralExpression.newConstant(true,PDataType.BOOLEAN,true) : where.accept(whereCompiler);
@@ -98,6 +95,11 @@ public class WhereCompiler {
         }
         if (expression.getDataType() != PDataType.BOOLEAN) {
             throw TypeMismatchException.newException(PDataType.BOOLEAN, expression.getDataType(), expression.toString());
+        }
+        if (viewWhere != null) {
+            WhereExpressionCompiler viewWhereCompiler = new WhereExpressionCompiler(context, true);
+            Expression viewExpression = viewWhere.accept(viewWhereCompiler);
+            expression = AndExpression.create(Lists.newArrayList(expression, viewExpression));
         }
         
         expression = WhereOptimizer.pushKeyExpressionsToScan(context, statement, expression, extractedNodes);
@@ -110,7 +112,23 @@ public class WhereCompiler {
         private boolean disambiguateWithFamily;
 
         WhereExpressionCompiler(StatementContext context) {
-            super(context);
+            super(context, true);
+        }
+
+        WhereExpressionCompiler(StatementContext context, boolean resolveViewConstants) {
+            super(context, resolveViewConstants);
+        }
+
+        @Override
+        public Expression visit(ColumnParseNode node) throws SQLException {
+            ColumnRef ref = resolveColumn(node);
+            TableRef tableRef = ref.getTableRef();
+            if (tableRef.equals(context.getCurrentTable()) && !SchemaUtil.isPKColumn(ref.getColumn())) {
+                // track the where condition columns. Later we need to ensure the Scan in HRS scans these column CFs
+                context.addWhereCoditionColumn(ref.getColumn().getFamilyName().getBytes(), ref.getColumn().getName()
+                        .getBytes());
+            }
+            return ref.newColumnExpression();
         }
 
         @Override

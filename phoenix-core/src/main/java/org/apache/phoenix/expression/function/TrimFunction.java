@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,12 +21,11 @@ import java.sql.SQLException;
 import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.parse.FunctionParseNode.Argument;
 import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ByteUtil;
 import org.apache.phoenix.util.StringUtil;
@@ -46,14 +43,14 @@ import org.apache.phoenix.util.StringUtil;
 public class TrimFunction extends ScalarFunction {
     public static final String NAME = "TRIM";
 
-    private Integer byteSize;
+    private Integer maxLength;
 
     public TrimFunction() { }
 
     public TrimFunction(List<Expression> children) throws SQLException {
         super(children);
         if (getStringExpression().getDataType().isFixedWidth()) {
-            byteSize = getStringExpression().getByteSize();
+            maxLength = getStringExpression().getMaxLength();
         }
     }
 
@@ -62,8 +59,8 @@ public class TrimFunction extends ScalarFunction {
     }
 
     @Override
-    public ColumnModifier getColumnModifier() {
-        return children.get(0).getColumnModifier();
+    public SortOrder getSortOrder() {
+        return children.get(0).getSortOrder();
     }    
 
     @Override
@@ -79,20 +76,20 @@ public class TrimFunction extends ScalarFunction {
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         
-        ColumnModifier columnModifier = getColumnModifier();
-        int end = StringUtil.getFirstNonBlankCharIdxFromEnd(string, offset, length, columnModifier);
+        SortOrder sortOrder = getSortOrder();
+        int end = StringUtil.getFirstNonBlankCharIdxFromEnd(string, offset, length, sortOrder);
         if (end == offset - 1) {
             ptr.set(ByteUtil.EMPTY_BYTE_ARRAY);
             return true; 
         }
-        int head = StringUtil.getFirstNonBlankCharIdxFromStart(string, offset, length, columnModifier);
+        int head = StringUtil.getFirstNonBlankCharIdxFromStart(string, offset, length, sortOrder);
         ptr.set(string, head, end - head + 1);
         return true;
     }
 
     @Override
-    public Integer getByteSize() {
-        return byteSize;
+    public Integer getMaxLength() {
+        return maxLength;
     }
 
     @Override

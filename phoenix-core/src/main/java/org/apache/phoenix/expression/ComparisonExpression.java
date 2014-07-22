@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -31,11 +29,9 @@ import java.util.List;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.io.WritableUtils;
-import org.apache.phoenix.exception.SQLExceptionCode;
-import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.expression.visitor.ExpressionVisitor;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TypeMismatchException;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ByteUtil;
@@ -114,13 +110,6 @@ public class ComparisonExpression extends BaseCompoundExpression {
         Expression rhsExpr = children.get(1);
         PDataType lhsExprDataType = lhsExpr.getDataType();
         PDataType rhsExprDataType = rhsExpr.getDataType();
-        // We don't yet support comparison between entire arrays
-        if ( ( (lhsExprDataType != null && lhsExprDataType.isArrayType()) || 
-               (rhsExprDataType != null && rhsExprDataType.isArrayType()) ) &&
-             ( op != CompareOp.EQUAL && op != CompareOp.NOT_EQUAL ) ) {
-            throw new SQLExceptionInfo.Builder(SQLExceptionCode.NON_EQUALITY_ARRAY_COMPARISON)
-            .setMessage(ComparisonExpression.toString(op, children)).build().buildException();
-        }
         
         if (lhsExpr instanceof RowValueConstructorExpression || rhsExpr instanceof RowValueConstructorExpression) {
             if (op == CompareOp.EQUAL || op == CompareOp.NOT_EQUAL) {
@@ -172,12 +161,12 @@ public class ComparisonExpression extends BaseCompoundExpression {
             // Comparing an unsigned int/long against a negative int/long would be an example. We just need to take
             // into account the comparison operator.
             if (rhsExprDataType != lhsExprDataType 
-                    || rhsExpr.getColumnModifier() != lhsExpr.getColumnModifier()
-                    || (rhsExpr.getMaxLength() != null && lhsExpr.getMaxLength() != null && rhsExpr.getMaxLength() < lhsExpr.getMaxLength())) {
+                    || rhsExpr.getSortOrder() != lhsExpr.getSortOrder()
+                    || (rhsExprDataType.isFixedWidth() && rhsExpr.getMaxLength() != null && lhsExprDataType.isFixedWidth() && lhsExpr.getMaxLength() != null && rhsExpr.getMaxLength() < lhsExpr.getMaxLength())) {
                 // TODO: if lengths are unequal and fixed width?
                 if (rhsExprDataType.isCoercibleTo(lhsExprDataType, rhsValue)) { // will convert 2.0 -> 2
                     children = Arrays.asList(children.get(0), LiteralExpression.newConstant(rhsValue, lhsExprDataType, 
-                            lhsExpr.getMaxLength(), null, lhsExpr.getColumnModifier(), isDeterministic));
+                            lhsExpr.getMaxLength(), null, lhsExpr.getSortOrder(), isDeterministic));
                 } else if (op == CompareOp.EQUAL) {
                     return LiteralExpression.newConstant(false, PDataType.BOOLEAN, true);
                 } else if (op == CompareOp.NOT_EQUAL) {
@@ -199,7 +188,7 @@ public class ComparisonExpression extends BaseCompoundExpression {
                         default: // Else, we truncate the value
                             BigDecimal bd = (BigDecimal)rhsValue;
                             rhsValue = bd.longValue() + increment;
-                            children = Arrays.asList(lhsExpr, LiteralExpression.newConstant(rhsValue, lhsExprDataType, lhsExpr.getColumnModifier(), rhsExpr.isDeterministic()));
+                            children = Arrays.asList(lhsExpr, LiteralExpression.newConstant(rhsValue, lhsExprDataType, lhsExpr.getSortOrder(), rhsExpr.isDeterministic()));
                             break;
                         }
                         break;
@@ -247,7 +236,7 @@ public class ComparisonExpression extends BaseCompoundExpression {
                                 break;
                             }
                         }
-                        children = Arrays.asList(lhsExpr, LiteralExpression.newConstant(rhsValue, rhsExprDataType, lhsExpr.getColumnModifier(), isDeterministic));
+                        children = Arrays.asList(lhsExpr, LiteralExpression.newConstant(rhsValue, rhsExprDataType, lhsExpr.getSortOrder(), isDeterministic));
                         break;
                     }
                 }
@@ -308,31 +297,37 @@ public class ComparisonExpression extends BaseCompoundExpression {
         if (!children.get(0).evaluate(tuple, ptr)) {
             return false;
         }
+        if (ptr.getLength() == 0) { // null comparison evals to null
+            return true;
+        }
         byte[] lhsBytes = ptr.get();
         int lhsOffset = ptr.getOffset();
         int lhsLength = ptr.getLength();
         PDataType lhsDataType = children.get(0).getDataType();
-        ColumnModifier lhsColumnModifier = children.get(0).getColumnModifier();
+        SortOrder lhsSortOrder = children.get(0).getSortOrder();
         
         if (!children.get(1).evaluate(tuple, ptr)) {
             return false;
+        }
+        if (ptr.getLength() == 0) { // null comparison evals to null
+            return true;
         }
         
         byte[] rhsBytes = ptr.get();
         int rhsOffset = ptr.getOffset();
         int rhsLength = ptr.getLength();
         PDataType rhsDataType = children.get(1).getDataType();
-        ColumnModifier rhsColumnModifier = children.get(1).getColumnModifier();   
+        SortOrder rhsSortOrder = children.get(1).getSortOrder();   
         if (rhsDataType == PDataType.CHAR) {
-            rhsLength = StringUtil.getUnpaddedCharLength(rhsBytes, rhsOffset, rhsLength, rhsColumnModifier);
+            rhsLength = StringUtil.getUnpaddedCharLength(rhsBytes, rhsOffset, rhsLength, rhsSortOrder);
         }
         if (lhsDataType == PDataType.CHAR) {
-            lhsLength = StringUtil.getUnpaddedCharLength(lhsBytes, lhsOffset, lhsLength, lhsColumnModifier);
+            lhsLength = StringUtil.getUnpaddedCharLength(lhsBytes, lhsOffset, lhsLength, lhsSortOrder);
         }
         
         
-        int comparisonResult = lhsDataType.compareTo(lhsBytes, lhsOffset, lhsLength, lhsColumnModifier, 
-                rhsBytes, rhsOffset, rhsLength, rhsColumnModifier, rhsDataType);
+        int comparisonResult = lhsDataType.compareTo(lhsBytes, lhsOffset, lhsLength, lhsSortOrder, 
+                rhsBytes, rhsOffset, rhsLength, rhsSortOrder, rhsDataType);
         ptr.set(ByteUtil.compare(op, comparisonResult) ? PDataType.TRUE_BYTES : PDataType.FALSE_BYTES);
         return true;
     }

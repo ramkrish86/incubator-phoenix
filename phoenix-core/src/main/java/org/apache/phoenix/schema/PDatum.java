@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -32,11 +30,6 @@ public interface PDatum {
     PDataType getDataType();
 
     /**
-     * @return maximum byte length of the column
-     */
-    Integer getByteSize();
-
-    /**
      * @return the actual length of the column. For decimal, it would be its precision. For char or
      * varchar, it would be the maximum length as specified during schema definition.
      */
@@ -48,7 +41,7 @@ public interface PDatum {
     Integer getScale();
     
     /**
-     * @return The modifier for this column or null if it doesn't have a modifier
+     * @return The SortOrder for this column, never null
      */
-    ColumnModifier getColumnModifier();
+    SortOrder getSortOrder();
 }

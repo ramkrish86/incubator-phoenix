@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,13 +23,12 @@ import java.io.UnsupportedEncodingException;
 import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
 import org.apache.phoenix.parse.FunctionParseNode.Argument;
 import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.StringUtil;
 
@@ -59,7 +56,7 @@ public class SubstrFunction extends PrefixFunction {
     private boolean isOffsetConstant;
     private boolean isLengthConstant;
     private boolean isFixedWidth;
-    private Integer byteSize;
+    private Integer maxLength;
 
     public SubstrFunction() {
     }
@@ -70,24 +67,24 @@ public class SubstrFunction extends PrefixFunction {
     }
 
     private void init() {
-        // TODO: when we have ColumnModifier.REVERSE, we'll need to negate offset,
-        // since the bytes are reverse and we'll want to work from the end.
         isOffsetConstant = getOffsetExpression() instanceof LiteralExpression;
         isLengthConstant = getLengthExpression() instanceof LiteralExpression;
         hasLengthExpression = !isLengthConstant || ((LiteralExpression)getLengthExpression()).getValue() != null;
         isFixedWidth = getStrExpression().getDataType().isFixedWidth() && ((hasLengthExpression && isLengthConstant) || (!hasLengthExpression && isOffsetConstant));
         if (hasLengthExpression && isLengthConstant) {
             Integer maxLength = ((Number)((LiteralExpression)getLengthExpression()).getValue()).intValue();
-            this.byteSize = maxLength >= 0 ? maxLength : 0;
+            this.maxLength = maxLength >= 0 ? maxLength : 0;
         } else if (isOffsetConstant) {
             Number offsetNumber = (Number)((LiteralExpression)getOffsetExpression()).getValue();
             if (offsetNumber != null) {
                 int offset = offsetNumber.intValue();
-                if (getStrExpression().getDataType().isFixedWidth()) {
+                PDataType type = getStrExpression().getDataType();
+                if (type.isFixedWidth()) {
                     if (offset >= 0) {
-                        byteSize = getStrExpression().getByteSize() - offset + (offset == 0 ? 0 : 1);
+                        Integer maxLength = getStrExpression().getMaxLength();
+                        this.maxLength = maxLength - offset + (offset == 0 ? 0 : 1);
                     } else {
-                        byteSize = -offset;
+                        this.maxLength = -offset;
                     }
                 }
             }
@@ -100,7 +97,7 @@ public class SubstrFunction extends PrefixFunction {
         if (!offsetExpression.evaluate(tuple,  ptr)) {
             return false;
         }
-        int offset = offsetExpression.getDataType().getCodec().decodeInt(ptr, offsetExpression.getColumnModifier());
+        int offset = offsetExpression.getDataType().getCodec().decodeInt(ptr, offsetExpression.getSortOrder());
         
         int length = -1;
         if (hasLengthExpression) {
@@ -108,7 +105,7 @@ public class SubstrFunction extends PrefixFunction {
             if (!lengthExpression.evaluate(tuple, ptr)) {
                 return false;
             }
-            length = lengthExpression.getDataType().getCodec().decodeInt(ptr, lengthExpression.getColumnModifier());
+            length = lengthExpression.getDataType().getCodec().decodeInt(ptr, lengthExpression.getSortOrder());
             if (length <= 0) {
                 return false;
             }
@@ -120,8 +117,8 @@ public class SubstrFunction extends PrefixFunction {
         
         try {
             boolean isCharType = getStrExpression().getDataType() == PDataType.CHAR;
-            ColumnModifier columnModifier = getStrExpression().getColumnModifier();
-            int strlen = isCharType ? ptr.getLength() : StringUtil.calculateUTF8Length(ptr.get(), ptr.getOffset(), ptr.getLength(), columnModifier);
+            SortOrder sortOrder = getStrExpression().getSortOrder();
+            int strlen = isCharType ? ptr.getLength() : StringUtil.calculateUTF8Length(ptr.get(), ptr.getOffset(), ptr.getLength(), sortOrder);
             
             // Account for 1 versus 0-based offset
             offset = offset - (offset <= 0 ? 0 : 1);
@@ -134,8 +131,8 @@ public class SubstrFunction extends PrefixFunction {
             int maxLength = strlen - offset;
             length = length == -1 ? maxLength : Math.min(length,maxLength);
             
-            int byteOffset = isCharType ? offset : StringUtil.getByteLengthForUtf8SubStr(ptr.get(), ptr.getOffset(), offset, columnModifier);
-            int byteLength = isCharType ? length : StringUtil.getByteLengthForUtf8SubStr(ptr.get(), ptr.getOffset() + byteOffset, length, columnModifier);
+            int byteOffset = isCharType ? offset : StringUtil.getByteLengthForUtf8SubStr(ptr.get(), ptr.getOffset(), offset, sortOrder);
+            int byteLength = isCharType ? length : StringUtil.getByteLengthForUtf8SubStr(ptr.get(), ptr.getOffset() + byteOffset, length, sortOrder);
             ptr.set(ptr.get(), ptr.getOffset() + byteOffset, byteLength);
             return true;
         } catch (UnsupportedEncodingException e) {
@@ -156,19 +153,13 @@ public class SubstrFunction extends PrefixFunction {
     }
 
     @Override
-    public Integer getByteSize() {
-        return byteSize;
-    }
-    
-    // TODO: we shouldn't need both getByteSize() and getMaxLength()
-    @Override
     public Integer getMaxLength() {
-        return byteSize;
+        return maxLength;
     }
     
     @Override
-    public ColumnModifier getColumnModifier() {
-        return getStrExpression().getColumnModifier();
+    public SortOrder getSortOrder() {
+        return getStrExpression().getSortOrder();
     }
 
     @Override

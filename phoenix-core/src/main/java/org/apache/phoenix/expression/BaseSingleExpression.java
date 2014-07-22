@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,9 +23,9 @@ import java.io.IOException;
 import java.util.List;
 
 import org.apache.hadoop.io.WritableUtils;
+import org.apache.phoenix.expression.visitor.ExpressionVisitor;
 
 import com.google.common.collect.ImmutableList;
-import org.apache.phoenix.expression.visitor.ExpressionVisitor;
 
 
 /**
@@ -77,6 +75,24 @@ public abstract class BaseSingleExpression extends BaseExpression {
     }
 
     @Override
+    public int hashCode() {
+        final int prime = 31;
+        int result = 1;
+        result = prime * result + children.get(0).hashCode();
+        return result;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null) return false;
+        if (getClass() != obj.getClass()) return false;
+        BaseSingleExpression other = (BaseSingleExpression)obj;
+        if (!children.get(0).equals(other.children.get(0))) return false;
+        return true;
+    }
+
+    @Override
     public <T> T accept(ExpressionVisitor<T> visitor) {
         List<T> l = acceptChildren(visitor, null);
         if (l.isEmpty()) {
@@ -87,5 +103,10 @@ public abstract class BaseSingleExpression extends BaseExpression {
     
     public Expression getChild() {
         return children.get(0);
+    }
+    
+    @Override
+    public boolean requiresFinalEvaluation() {
+        return children.get(0).requiresFinalEvaluation();
     }
 }

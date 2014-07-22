@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,8 +19,15 @@ package org.apache.phoenix.compile;
 
 import java.sql.SQLException;
 
-import org.apache.phoenix.parse.*;
-import org.apache.phoenix.schema.*;
+import org.apache.phoenix.parse.BindParseNode;
+import org.apache.phoenix.parse.FilterableStatement;
+import org.apache.phoenix.parse.LimitNode;
+import org.apache.phoenix.parse.LiteralParseNode;
+import org.apache.phoenix.parse.ParseNodeFactory;
+import org.apache.phoenix.parse.TraverseNoParseNodeVisitor;
+import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.PDatum;
+import org.apache.phoenix.schema.SortOrder;
 
 
 public class LimitCompiler {
@@ -38,10 +43,6 @@ public class LimitCompiler {
             return PDataType.INTEGER;
         }
         @Override
-        public Integer getByteSize() {
-            return getDataType().getByteSize();
-        }
-        @Override
         public Integer getMaxLength() {
             return null;
         }
@@ -50,8 +51,8 @@ public class LimitCompiler {
             return null;
         }
 		@Override
-		public ColumnModifier getColumnModifier() {
-			return null;
+		public SortOrder getSortOrder() {
+			return SortOrder.getDefault();
 		}
     };
     
@@ -97,6 +98,10 @@ public class LimitCompiler {
     
         @Override
         public Void visit(BindParseNode node) throws SQLException {
+            // This is for static evaluation in SubselectRewriter.
+            if (context == null)
+                return null;
+                        
             Object value = context.getBindManager().getBindValue(node);
             context.getBindManager().addParamMetaData(node, LIMIT_DATUM);
             // Resolve the bind value, create a LiteralParseNode, and call the visit method for it.

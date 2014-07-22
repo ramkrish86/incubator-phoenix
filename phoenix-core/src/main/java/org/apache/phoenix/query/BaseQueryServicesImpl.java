@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -48,7 +46,7 @@ public abstract class BaseQueryServicesImpl implements QueryServices {
                 options.getThreadPoolSize(), 
                 options.getQueueSize());
         this.memoryManager = new GlobalMemoryManager(
-                Runtime.getRuntime().totalMemory() * options.getMaxMemoryPerc() / 100,
+                Runtime.getRuntime().maxMemory() * options.getMaxMemoryPerc() / 100,
                 options.getMaxMemoryWaitMs());
         this.props = options.getProps();
         this.queryOptimizer = new QueryOptimizer(this);

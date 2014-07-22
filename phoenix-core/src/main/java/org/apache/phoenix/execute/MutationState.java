@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,23 +24,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.collect.Iterators;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import org.apache.hadoop.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.cache.ServerCacheClient;
 import org.apache.phoenix.cache.ServerCacheClient.ServerCache;
 import org.apache.phoenix.coprocessor.MetaDataProtocol.MetaDataMutationResult;
 import org.apache.phoenix.exception.SQLExceptionCode;
+import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.index.IndexMaintainer;
 import org.apache.phoenix.index.IndexMetaDataCacheClient;
 import org.apache.phoenix.index.PhoenixIndexCodec;
@@ -51,14 +44,22 @@ import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.IllegalDataException;
 import org.apache.phoenix.schema.MetaDataClient;
 import org.apache.phoenix.schema.PColumn;
+import org.apache.phoenix.schema.PName;
 import org.apache.phoenix.schema.PRow;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.util.ByteUtil;
 import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.SQLCloseable;
 import org.apache.phoenix.util.ServerUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 /**
  * 
@@ -270,6 +271,7 @@ public class MutationState implements SQLCloseable {
     private long[] validate() throws SQLException {
         int i = 0;
         Long scn = connection.getSCN();
+        PName tenantId = connection.getTenantId();
         MetaDataClient client = new MetaDataClient(connection);
         long[] timeStamps = new long[this.mutations.size()];
         for (Map.Entry<TableRef, Map<ImmutableBytesPtr,Map<PColumn,byte[]>>> entry : mutations.entrySet()) {
@@ -292,7 +294,7 @@ public class MutationState implements SQLCloseable {
                                 }
                             }
                         }
-                        table = connection.getPMetaData().getTable(tableRef.getTable().getName().getString());
+                        table = connection.getMetaDataCache().getTable(new PTableKey(tenantId, table.getName().getString()));
                         for (PColumn column : columns) {
                             if (column != null) {
                                 table.getColumnFamily(column.getFamilyName().getString()).getColumn(column.getName().getString());
@@ -301,7 +303,7 @@ public class MutationState implements SQLCloseable {
                     }
                 }
             }
-            timeStamps[i++] = scn == null ? serverTimeStamp : scn;
+            timeStamps[i++] = scn == null ? serverTimeStamp == QueryConstants.UNSET_TIMESTAMP ? HConstants.LATEST_TIMESTAMP : serverTimeStamp : scn;
         }
         return timeStamps;
     }
@@ -310,11 +312,11 @@ public class MutationState implements SQLCloseable {
         long byteSize = 0;
         int keyValueCount = 0;
         for (Mutation mutation : mutations) {
-            if (mutation.getFamilyMap() != null) { // Not a Delete of the row
-                for (Entry<byte[], List<KeyValue>> entry : mutation.getFamilyMap().entrySet()) {
+            if (mutation.getFamilyCellMap() != null) { // Not a Delete of the row
+                for (Entry<byte[], List<Cell>> entry : mutation.getFamilyCellMap().entrySet()) {
                     if (entry.getValue() != null) {
-                        for (KeyValue kv : entry.getValue()) {
-                            byteSize += kv.getBuffer().length;
+                        for (Cell kv : entry.getValue()) {
+                            byteSize += CellUtil.estimatedSizeOf(kv);
                             keyValueCount++;
                         }
                     }
@@ -324,6 +326,7 @@ public class MutationState implements SQLCloseable {
         logger.debug("Sending " + mutations.size() + " mutations for " + Bytes.toString(htable.getTableName()) + " with " + keyValueCount + " key values of total size " + byteSize + " bytes");
     }
     
+    @SuppressWarnings("deprecation")
     public void commit() throws SQLException {
         int i = 0;
         byte[] tenantId = connection.getTenantId() == null ? null : connection.getTenantId().getBytes();

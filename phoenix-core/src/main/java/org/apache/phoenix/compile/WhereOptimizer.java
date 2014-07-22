@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -32,6 +30,8 @@ import java.util.Set;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.phoenix.expression.AndExpression;
+import org.apache.phoenix.expression.BaseExpression;
+import org.apache.phoenix.expression.BaseExpression.ExpressionComparabilityWrapper;
 import org.apache.phoenix.expression.BaseTerminalExpression;
 import org.apache.phoenix.expression.CoerceExpression;
 import org.apache.phoenix.expression.ComparisonExpression;
@@ -43,7 +43,6 @@ import org.apache.phoenix.expression.LiteralExpression;
 import org.apache.phoenix.expression.OrExpression;
 import org.apache.phoenix.expression.RowKeyColumnExpression;
 import org.apache.phoenix.expression.RowValueConstructorExpression;
-import org.apache.phoenix.expression.RowValueConstructorExpression.ExpressionComparabilityWrapper;
 import org.apache.phoenix.expression.function.FunctionExpression.OrderPreserving;
 import org.apache.phoenix.expression.function.ScalarFunction;
 import org.apache.phoenix.expression.visitor.TraverseNoExpressionVisitor;
@@ -51,15 +50,16 @@ import org.apache.phoenix.parse.FilterableStatement;
 import org.apache.phoenix.parse.HintNode.Hint;
 import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.query.QueryConstants;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PName;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.RowKeySchema;
 import org.apache.phoenix.schema.SaltingUtil;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.MetaDataUtil;
 import org.apache.phoenix.util.SchemaUtil;
 
 import com.google.common.base.Preconditions;
@@ -155,11 +155,19 @@ public class WhereOptimizer {
             pkPos++;
         }
         
-        // aAd tenant data isolation for tenant-specific tables
+        // Add tenant data isolation for tenant-specific tables
         if (tenantId != null && table.isMultiTenant()) {
             KeyRange tenantIdKeyRange = KeyRange.getKeyRange(tenantId.getBytes());
             cnf.add(singletonList(tenantIdKeyRange));
-            if (iterator.hasNext()) iterator.next();
+            //if (iterator.hasNext()) iterator.next();
+            pkPos++;
+        }
+        // Add unique index ID for shared indexes on views. This ensures
+        // that different indexes don't interleave.
+        if (table.getViewIndexId() != null) {
+            KeyRange indexIdKeyRange = KeyRange.getKeyRange(MetaDataUtil.getViewIndexIdDataType().toBytes(table.getViewIndexId()));
+            cnf.add(singletonList(indexIdKeyRange));
+            //if (iterator.hasNext()) iterator.next();
             pkPos++;
         }
         // Concat byte arrays of literals to form scan start key
@@ -320,7 +328,7 @@ public class WhereOptimizer {
                 return null;
             }
             
-            int positionOffset = table.getBucketNum() == null ? 0 : 1;
+            int positionOffset = (table.getBucketNum() ==null ? 0 : 1) + (this.context.getConnection().getTenantId() != null && table.isMultiTenant() ? 1 : 0) + (table.getViewIndexId() == null ? 0 : 1);
             int position = 0;
             for (KeySlots slots : childSlots) {
                 KeySlot keySlot = slots.iterator().next();
@@ -381,14 +389,14 @@ public class WhereOptimizer {
                         // For the actual type of the coerceBytes call, we use the node type instead of the rhs type, because
                         // for IN, the rhs type will be VARBINARY and no coerce will be done in that case (and we need it to
                         // be done).
-                        node.getChild().getDataType().coerceBytes(ptr, node.getDataType(), rhs.getColumnModifier(), node.getChild().getColumnModifier());
+                        node.getChild().getDataType().coerceBytes(ptr, node.getDataType(), rhs.getSortOrder(), node.getChild().getSortOrder());
                         lower = ByteUtil.copyKeyBytesIfNecessary(ptr);
                     }
                     byte[] upper = range.getUpperRange();
                     if (!range.upperUnbound()) {
                         ptr.set(upper);
                         // Do the reverse translation so we can optimize out the coerce expression
-                        node.getChild().getDataType().coerceBytes(ptr, node.getDataType(), rhs.getColumnModifier(), node.getChild().getColumnModifier());
+                        node.getChild().getDataType().coerceBytes(ptr, node.getDataType(), rhs.getSortOrder(), node.getChild().getSortOrder());
                         upper = ByteUtil.copyKeyBytesIfNecessary(ptr);
                     }
                     return KeyRange.getKeyRange(lower, range.isLowerInclusive(), upper, range.isUpperInclusive());
@@ -411,7 +419,7 @@ public class WhereOptimizer {
             KeySlot[] keySlot = new KeySlot[nColumns];
             KeyRange minMaxRange = KeyRange.EVERYTHING_RANGE;
             List<Expression> minMaxExtractNodes = Lists.<Expression>newArrayList();
-            int initPosition = (table.getBucketNum() ==null ? 0 : 1);
+            int initPosition = (table.getBucketNum() ==null ? 0 : 1) + (this.context.getConnection().getTenantId() != null && table.isMultiTenant() ? 1 : 0) + (table.getViewIndexId() == null ? 0 : 1);
             for (KeySlots childSlot : childSlots) {
                 if (childSlot == DEGENERATE_KEY_PARTS) {
                     return DEGENERATE_KEY_PARTS;
@@ -470,7 +478,7 @@ public class WhereOptimizer {
             if (orExpression.getChildren().size() != childSlots.size()) {
                 return null;
             }
-            int initialPos = (table.getBucketNum() == null ? 0 : 1);
+            int initialPos = (table.getBucketNum() ==null ? 0 : 1) + (this.context.getConnection().getTenantId() != null && table.isMultiTenant() ? 1 : 0) + (table.getViewIndexId() == null ? 0 : 1);
             KeySlot theSlot = null;
             List<Expression> slotExtractNodes = Lists.<Expression>newArrayList();
             int thePosition = -1;
@@ -669,13 +677,8 @@ public class WhereOptimizer {
             KeySlots childSlots = childParts.get(0);
             KeySlot childSlot = childSlots.iterator().next();
             KeyPart childPart = childSlot.getKeyPart();
-            ColumnModifier modifier = childPart.getColumn().getColumnModifier();
-            CompareOp op = node.getFilterOp();
-            // For descending columns, the operator needs to be transformed to
-            // it's opposite, since the range is backwards.
-            if (modifier != null) {
-                op = modifier.transform(op);
-            }
+            SortOrder sortOrder = childPart.getColumn().getSortOrder();
+            CompareOp op = sortOrder.transform(node.getFilterOp());
             KeyRange keyRange = childPart.getKeyRange(op, rhs);
             return newKeyParts(childSlot, node, keyRange);
         }
@@ -719,12 +722,12 @@ public class WhereOptimizer {
             KeySlots childSlots = childParts.get(0);
             KeySlot childSlot = childSlots.iterator().next();
             final String startsWith = node.getLiteralPrefix();
-            byte[] key = PDataType.CHAR.toBytes(startsWith, node.getChildren().get(0).getColumnModifier());
+            byte[] key = PDataType.CHAR.toBytes(startsWith, node.getChildren().get(0).getSortOrder());
             // If the expression is an equality expression against a fixed length column
             // and the key length doesn't match the column length, the expression can
             // never be true.
             // An zero length byte literal is null which can never be compared against as true
-            Integer childNodeFixedLength = node.getChildren().get(0).getByteSize();
+            Integer childNodeFixedLength = node.getChildren().get(0).getMaxLength();
             if (childNodeFixedLength != null && key.length > childNodeFixedLength) {
                 return DEGENERATE_KEY_PARTS;
             }
@@ -732,7 +735,7 @@ public class WhereOptimizer {
             PColumn column = childSlot.getKeyPart().getColumn();
             PDataType type = column.getDataType();
             KeyRange keyRange = type.getKeyRange(key, true, ByteUtil.nextKey(key), false);
-            Integer columnFixedLength = column.getByteSize();
+            Integer columnFixedLength = column.getMaxLength();
             if (columnFixedLength != null) {
                 keyRange = keyRange.fill(columnFixedLength);
             }
@@ -755,7 +758,6 @@ public class WhereOptimizer {
             List<KeyRange> ranges = Lists.newArrayListWithExpectedSize(keyExpressions.size());
             KeySlot childSlot = childParts.get(0).iterator().next();
             KeyPart childPart = childSlot.getKeyPart();
-            ColumnModifier mod = node.getChildren().get(0).getColumnModifier();
             // We can only optimize a row value constructor that is fully qualified
             if (childSlot.getPKSpan() > 1 && !isFullyQualified(childSlot.getPKSpan())) {
                 // Just return a key part that has the min/max of the IN list, but doesn't
@@ -769,9 +771,6 @@ public class WhereOptimizer {
             for (Expression key : keyExpressions) {
                 KeyRange range = childPart.getKeyRange(CompareOp.EQUAL, key);
                 if (range != KeyRange.EMPTY_RANGE) { // null means it can't possibly be in range
-                    if (mod != null) {
-                        range = range.invert();
-                    }
                     ranges.add(range);
                 }
             }
@@ -795,7 +794,7 @@ public class WhereOptimizer {
             boolean isFixedWidth = type.isFixedWidth();
             if (isFixedWidth) { // if column can't be null
                 return node.isNegate() ? null : 
-                    newKeyParts(childSlot, node, type.getKeyRange(new byte[column.getByteSize()], true,
+                    newKeyParts(childSlot, node, type.getKeyRange(new byte[SchemaUtil.getFixedByteSize(column)], true,
                                                                   KeyRange.UNBOUND, true));
             } else {
                 KeyRange keyRange = node.isNegate() ? KeyRange.IS_NOT_NULL_RANGE : KeyRange.IS_NULL_RANGE;
@@ -945,7 +944,7 @@ public class WhereOptimizer {
                 // If the column is fixed width, fill is up to it's byte size
                 PDataType type = getColumn().getDataType();
                 if (type.isFixedWidth()) {
-                    Integer length = getColumn().getByteSize();
+                    Integer length = getColumn().getMaxLength();
                     if (length != null) {
                         key = ByteUtil.fillKey(key, length);
                     }
@@ -1041,7 +1040,7 @@ public class WhereOptimizer {
                     // applying the appropriate transformations to the RHS (through the KeyPart#getKeyRange method).
                     // For example, with WHERE (invert(a),b) < ('abc',5), the 'abc' would be inverted by going through the
                     // childPart.getKeyRange defined for the invert function.
-                    rhs = RowValueConstructorExpression.coerce(rvc, rhs, new ExpressionComparabilityWrapper() {
+                    rhs = BaseExpression.coerce(rvc, rhs, new ExpressionComparabilityWrapper() {
 
                         @Override
                         public Expression wrap(final Expression lhs, final Expression rhs) throws SQLException {
@@ -1076,8 +1075,8 @@ public class WhereOptimizer {
                                     // use to compute the next key when we evaluate the RHS row value constructor
                                     // below.  We could create a new childPart with a delegate column that returns
                                     // null for getByteSize().
-                                    if (lhs.getByteSize() != null && key.length != lhs.getByteSize()) {
-                                        key = Arrays.copyOf(key, lhs.getByteSize());
+                                    if (lhs.getDataType().isFixedWidth() && lhs.getMaxLength() != null && key.length != lhs.getMaxLength()) {
+                                        key = Arrays.copyOf(key, lhs.getMaxLength());
                                     }
                                     ptr.set(key);
                                     return true;
@@ -1094,11 +1093,6 @@ public class WhereOptimizer {
                                 }
 
                                 @Override
-                                public Integer getByteSize() {
-                                    return lhs.getByteSize();
-                               }
-
-                                @Override
                                 public Integer getMaxLength() {
                                     return lhs.getMaxLength();
                                 }
@@ -1109,8 +1103,8 @@ public class WhereOptimizer {
                                 }
 
                                 @Override
-                                public ColumnModifier getColumnModifier() {
-                                    return childPart.getColumn().getColumnModifier();
+                                public SortOrder getSortOrder() {
+                                    return childPart.getColumn().getSortOrder();
                                 }
                             };
                         }

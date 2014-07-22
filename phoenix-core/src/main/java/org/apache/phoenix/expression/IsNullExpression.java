@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -115,5 +113,10 @@ public class IsNullExpression extends BaseSingleExpression {
             buf.append(" IS NULL");
         }
         return buf.toString();
+    }
+    
+    @Override
+    public boolean requiresFinalEvaluation() {
+        return super.requiresFinalEvaluation() || !this.isNegate();
     }
 }

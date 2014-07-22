@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,7 +22,6 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.expression.visitor.ExpressionVisitor;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PDatum;
@@ -103,24 +100,18 @@ public class RowKeyColumnExpression  extends ColumnExpression {
         int maxOffset = ptr.getOffset() + ptr.getLength();
         if (offset < maxOffset) {
             byte[] buffer = ptr.get();
-            int fixedByteSize = -1;
+            int byteSize = -1;
             // FIXME: fixedByteSize <= maxByteSize ? fixedByteSize : 0 required because HBase passes bogus keys to filter to position scan (HBASE-6562)
             if (fromType.isFixedWidth()) {
-                fixedByteSize = getByteSize();
-                fixedByteSize = fixedByteSize <= maxOffset ? fixedByteSize : 0;
+                Integer maxLength = getMaxLength();
+                byteSize = maxLength == null ? fromType.getByteSize() : maxLength;
+                byteSize = byteSize <= maxOffset ? byteSize : 0;
             }
-            int length = fixedByteSize >= 0 ? fixedByteSize  : accessor.getLength(buffer, offset, maxOffset);
+            int length = byteSize >= 0 ? byteSize  : accessor.getLength(buffer, offset, maxOffset);
             // In the middle of the key, an empty variable length byte array represents null
             if (length > 0) {
-                /*
-                if (type == fromType) {
-                    ptr.set(buffer,offset,length);
-                } else {
-                    ptr.set(type.toBytes(type.toObject(buffer, offset, length, fromType)));
-                }
-                */
                 ptr.set(buffer,offset,length);
-                type.coerceBytes(ptr, fromType, getColumnModifier(), getColumnModifier());
+                type.coerceBytes(ptr, fromType, getSortOrder(), getSortOrder());
             } else {
                 ptr.set(ByteUtil.EMPTY_BYTE_ARRAY);
             }
@@ -146,5 +137,17 @@ public class RowKeyColumnExpression  extends ColumnExpression {
     @Override
     public final <T> T accept(ExpressionVisitor<T> visitor) {
         return visitor.visit(this);
+    }
+    
+    /**
+     * Since we may never have encountered a key value column of interest, but the
+     * expression may evaluate to true just based on the row key columns, we need
+     * to do a final evaluation. An example of when this would be required is:
+     *     SELECT a FROM t WHERE a = 5 OR b = 2
+     * in the case where a is a PK column, b is a KV column and no b KV is found.
+     */
+    @Override
+    public boolean requiresFinalEvaluation() {
+        return true;
     }
 }

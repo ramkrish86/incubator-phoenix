@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,6 +23,14 @@ import java.util.Collection;
 import java.util.List;
 
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.query.KeyRange;
+import org.apache.phoenix.query.KeyRange.Bound;
+import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.PDatum;
+import org.apache.phoenix.schema.RowKeySchema;
+import org.apache.phoenix.schema.RowKeySchema.RowKeySchemaBuilder;
+import org.apache.phoenix.schema.SortOrder;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -32,14 +38,6 @@ import org.junit.runners.Parameterized.Parameters;
 
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
-import org.apache.phoenix.query.KeyRange;
-import org.apache.phoenix.query.KeyRange.Bound;
-import org.apache.phoenix.query.QueryConstants;
-import org.apache.phoenix.schema.ColumnModifier;
-import org.apache.phoenix.schema.PDataType;
-import org.apache.phoenix.schema.PDatum;
-import org.apache.phoenix.schema.RowKeySchema;
-import org.apache.phoenix.schema.RowKeySchema.RowKeySchemaBuilder;
 
 
 /**
@@ -67,10 +65,6 @@ public class ScanUtilTest {
                         return PDataType.CHAR;
                     }
                     @Override
-                    public Integer getByteSize() {
-                        return width;
-                    }
-                    @Override
                     public Integer getMaxLength() {
                         return width;
                     }
@@ -79,10 +73,10 @@ public class ScanUtilTest {
                         return null;
                     }
                     @Override
-                    public ColumnModifier getColumnModifier() {
-                        return null;
+                    public SortOrder getSortOrder() {
+                        return SortOrder.getDefault();
                     }
-                }, false, null);
+                }, false, SortOrder.getDefault());
             } else {
                 builder.addField(new PDatum() {
                     @Override
@@ -94,10 +88,6 @@ public class ScanUtilTest {
                         return PDataType.VARCHAR;
                     }
                     @Override
-                    public Integer getByteSize() {
-                        return null;
-                    }
-                    @Override
                     public Integer getMaxLength() {
                         return null;
                     }
@@ -106,10 +96,10 @@ public class ScanUtilTest {
                         return null;
                     }
                     @Override
-                    public ColumnModifier getColumnModifier() {
-                        return null;
+                    public SortOrder getSortOrder() {
+                        return SortOrder.getDefault();
                     }
-                }, false, null);
+                }, false, SortOrder.getDefault());
             }
         }
         this.schema = builder.build();
@@ -195,7 +185,7 @@ public class ScanUtilTest {
         testCases.addAll(
             foreach(new KeyRange[][]{{
                     PDataType.CHAR.getKeyRange(Bytes.toBytes("a"), true, Bytes.toBytes("a"), true),},{
-                    PDataType.CHAR.getKeyRange(KeyRange.UNBOUND, true, KeyRange.UNBOUND, true),},{
+                        KeyRange.EVERYTHING_RANGE,},{
                     PDataType.CHAR.getKeyRange(Bytes.toBytes("A"), false, Bytes.toBytes("B"), true),}},
                 new int[] {1,1,1},
                 ByteUtil.fillKey(PDataType.VARCHAR.toBytes("a"), 1),
@@ -205,7 +195,7 @@ public class ScanUtilTest {
         testCases.addAll(
                 foreach(new KeyRange[][]{{
                         PDataType.CHAR.getKeyRange(Bytes.toBytes("a"), true, Bytes.toBytes("a"), true),},{
-                        PDataType.CHAR.getKeyRange(KeyRange.UNBOUND, true, KeyRange.UNBOUND, true),}},
+                            KeyRange.EVERYTHING_RANGE,}},
                     new int[] {1,1},
                     ByteUtil.concat(PDataType.VARCHAR.toBytes("a")),
                     Bound.LOWER
@@ -214,7 +204,7 @@ public class ScanUtilTest {
         testCases.addAll(
             foreach(new KeyRange[][]{{
                     PDataType.CHAR.getKeyRange(Bytes.toBytes("a"), true, Bytes.toBytes("a"), true),},{
-                    PDataType.CHAR.getKeyRange(KeyRange.UNBOUND, true, KeyRange.UNBOUND, true),},{
+                        KeyRange.EVERYTHING_RANGE,},{
                     PDataType.CHAR.getKeyRange(Bytes.toBytes("A"), true, Bytes.toBytes("B"), true),}},
                 new int[] {1,1,1},
                 ByteUtil.concat(PDataType.VARCHAR.toBytes("a")),
@@ -290,7 +280,7 @@ public class ScanUtilTest {
         testCases.addAll(
             foreach(new KeyRange[][]{{
                     PDataType.CHAR.getKeyRange(Bytes.toBytes("a"), true, Bytes.toBytes("a"), true),},{
-                    PDataType.CHAR.getKeyRange(KeyRange.UNBOUND, true, KeyRange.UNBOUND, true),}},
+                        KeyRange.EVERYTHING_RANGE,}},
                 new int[] {1,1},
                 ByteUtil.fillKey(PDataType.VARCHAR.toBytes("b"), 1),
                 Bound.UPPER
@@ -299,7 +289,7 @@ public class ScanUtilTest {
         testCases.addAll(
             foreach(new KeyRange[][]{{
                     PDataType.CHAR.getKeyRange(Bytes.toBytes("a"), true, Bytes.toBytes("a"), true),},{
-                    PDataType.CHAR.getKeyRange(KeyRange.UNBOUND, true, KeyRange.UNBOUND, true),}},
+                    KeyRange.EVERYTHING_RANGE,}},
                 new int[] {1,1},
                 ByteUtil.concat(PDataType.VARCHAR.toBytes("b")),
                 Bound.UPPER

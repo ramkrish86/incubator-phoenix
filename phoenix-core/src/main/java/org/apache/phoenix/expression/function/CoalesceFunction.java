@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,7 +21,6 @@ import java.sql.SQLException;
 import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.expression.Expression;
@@ -65,10 +62,14 @@ public class CoalesceFunction extends ScalarFunction {
 
     @Override
     public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
-        if (children.get(0).evaluate(tuple, ptr)) {
+        boolean evaluated = children.get(0).evaluate(tuple, ptr);
+        if (evaluated) {
             return true;
         }
-        return children.get(1).evaluate(tuple, ptr);
+        if (tuple.isImmutable()) {
+            return children.get(1).evaluate(tuple, ptr);
+        }
+        return false;
     }
 
     @Override
@@ -77,12 +78,12 @@ public class CoalesceFunction extends ScalarFunction {
     }
 
     @Override
-    public Integer getByteSize() {
-        Integer maxByteSize1 = children.get(0).getByteSize();
-        if (maxByteSize1 != null) {
-            Integer maxByteSize2 = children.get(1).getByteSize();
-            if (maxByteSize2 != null) {
-                return maxByteSize1 > maxByteSize2 ? maxByteSize1 : maxByteSize2;
+    public Integer getMaxLength() {
+        Integer maxLength1 = children.get(0).getMaxLength();
+        if (maxLength1 != null) {
+            Integer maxLength2 = children.get(1).getMaxLength();
+            if (maxLength2 != null) {
+                return maxLength1 > maxLength2 ? maxLength1 : maxLength2;
             }
         }
         return null;
@@ -96,5 +97,10 @@ public class CoalesceFunction extends ScalarFunction {
     @Override
     public String getName() {
         return NAME;
+    }
+    
+    @Override
+    public boolean requiresFinalEvaluation() {
+        return true;
     }
 }

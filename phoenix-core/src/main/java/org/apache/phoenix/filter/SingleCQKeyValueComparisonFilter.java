@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +17,11 @@
  */
 package org.apache.phoenix.filter;
 
+import java.io.IOException;
+
+import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Writables;
 
 import org.apache.phoenix.expression.Expression;
 
@@ -46,4 +48,11 @@ public class SingleCQKeyValueComparisonFilter extends SingleKeyValueComparisonFi
         return Bytes.compareTo(cq, 0, cq.length, cqBuf, cqOffset, cqLength);
     }
 
+    public static SingleCQKeyValueComparisonFilter parseFrom(final byte [] pbBytes) throws DeserializationException {
+        try {
+            return (SingleCQKeyValueComparisonFilter)Writables.getWritable(pbBytes, new SingleCQKeyValueComparisonFilter());
+        } catch (IOException e) {
+            throw new DeserializationException(e);
+        }
+    }
 }

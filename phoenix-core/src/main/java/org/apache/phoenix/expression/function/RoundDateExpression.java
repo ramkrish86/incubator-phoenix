@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -30,8 +28,6 @@ import java.util.List;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.io.WritableUtils;
-
-import com.google.common.collect.Lists;
 import org.apache.phoenix.compile.KeyPart;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
@@ -39,8 +35,11 @@ import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PDataType.PDataCodec;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ByteUtil;
+
+import com.google.common.collect.Lists;
 
 /**
  * Function used to bucketize date/time values by rounding them to
@@ -134,7 +133,7 @@ public class RoundDateExpression extends ScalarFunction {
     public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
         if (children.get(0).evaluate(tuple, ptr)) {
             PDataType dataType = getDataType();
-            long time = dataType.getCodec().decodeLong(ptr, children.get(0).getColumnModifier());
+            long time = dataType.getCodec().decodeLong(ptr, children.get(0).getSortOrder());
             long value = roundTime(time);
             
             Date d = new Date(value);
@@ -180,15 +179,15 @@ public class RoundDateExpression extends ScalarFunction {
     }
     
     @Override
+    public Integer getMaxLength() {
+        return children.get(0).getMaxLength();
+    }
+    
+    @Override
     public PDataType getDataType() {
         return children.get(0).getDataType();
     }
     
-    @Override
-    public Integer getByteSize() {
-        return children.get(0).getByteSize();
-    }
-
     @Override
     public boolean isNullable() {
         return children.get(0).isNullable() || divBy == 0;
@@ -223,11 +222,11 @@ public class RoundDateExpression extends ScalarFunction {
                 ImmutableBytesWritable ptr = new ImmutableBytesWritable();
                 rhs.evaluate(null, ptr);
                 byte[] key = ByteUtil.copyKeyBytesIfNecessary(ptr);
-                // No need to take into account column modifier, because ROUND
+                // No need to take into account SortOrder, because ROUND
                 // always forces the value to be in ascending order
                 PDataCodec codec = getKeyRangeCodec(type);
                 int offset = ByteUtil.isInclusive(op) ? 1 : 0;
-                long value = codec.decodeLong(key, 0, null);
+                long value = codec.decodeLong(key, 0, SortOrder.getDefault());
                 byte[] nextKey = new byte[type.getByteSize()];
                 switch (op) {
                 case EQUAL:

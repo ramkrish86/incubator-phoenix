@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,17 +22,17 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.index.ValueGetter;
-import org.apache.hadoop.hbase.index.covered.update.ColumnReference;
-import org.apache.hadoop.hbase.index.util.ImmutableBytesPtr;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.phoenix.client.KeyValueBuilder;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
+import org.apache.phoenix.hbase.index.ValueGetter;
+import org.apache.phoenix.hbase.index.covered.update.ColumnReference;
+import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
+import org.apache.phoenix.hbase.index.util.KeyValueBuilder;
 import org.apache.phoenix.index.IndexMaintainer;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.ColumnFamilyNotFoundException;
@@ -69,11 +67,11 @@ public class IndexUtil {
     // row key was already done, so here we just need to covert from one built-in type to
     // another.
     public static PDataType getIndexColumnDataType(boolean isNullable, PDataType dataType) {
-        if (dataType == null || !isNullable || !dataType.isFixedWidth() || dataType == PDataType.BINARY) {
+        if (dataType == null || !isNullable || !dataType.isFixedWidth()) {
             return dataType;
         }
-        // for INT, BIGINT
-        if (dataType.isCoercibleTo(PDataType.TIMESTAMP) || dataType.isCoercibleTo(PDataType.DECIMAL)) {
+        // for fixed length numeric types and boolean
+        if (dataType.isCastableTo(PDataType.DECIMAL)) {
             return PDataType.DECIMAL;
         }
         // for CHAR
@@ -145,11 +143,10 @@ public class IndexUtil {
     }
 
     public static List<Mutation> generateIndexData(final PTable table, PTable index,
-            List<Mutation> dataMutations, ImmutableBytesWritable ptr, KeyValueBuilder builder)
+            List<Mutation> dataMutations, ImmutableBytesWritable ptr, final KeyValueBuilder kvBuilder)
             throws SQLException {
         try {
             IndexMaintainer maintainer = index.getIndexMaintainer(table);
-            maintainer.setKvBuilder(builder);
             List<Mutation> indexMutations = Lists.newArrayListWithExpectedSize(dataMutations.size());
            for (final Mutation dataMutation : dataMutations) {
                 long ts = MetaDataUtil.getClientTimeStamp(dataMutation);
@@ -166,30 +163,34 @@ public class IndexUtil {
                             if (isEmptyKeyValue(table, ref)) {
                                 return null;
                             }
-                            Map<byte [], List<KeyValue>> familyMap = dataMutation.getFamilyMap();
+                            Map<byte [], List<Cell>> familyMap = dataMutation.getFamilyCellMap();
                             byte[] family = ref.getFamily();
-                            List<KeyValue> kvs = familyMap.get(family);
+                            List<Cell> kvs = familyMap.get(family);
                             if (kvs == null) {
                                 return null;
                             }
                             byte[] qualifier = ref.getQualifier();
-                            for (KeyValue kv : kvs) {
-                                if (Bytes.compareTo(kv.getBuffer(), kv.getFamilyOffset(), kv.getFamilyLength(), family, 0, family.length) == 0 &&
-                                    Bytes.compareTo(kv.getBuffer(), kv.getQualifierOffset(), kv.getQualifierLength(), qualifier, 0, qualifier.length) == 0) {
-                                    return new ImmutableBytesPtr(kv.getBuffer(), kv.getValueOffset(), kv.getValueLength());
+                            for (Cell kv : kvs) {
+                                if (Bytes.compareTo(kv.getFamilyArray(), kv.getFamilyOffset(), kv.getFamilyLength(), family, 0, family.length) == 0 &&
+                                    Bytes.compareTo(kv.getQualifierArray(), kv.getQualifierOffset(), kv.getQualifierLength(), qualifier, 0, qualifier.length) == 0) {
+                                  ImmutableBytesPtr ptr = new ImmutableBytesPtr();
+                                  kvBuilder.getValueAsPtr(kv, ptr);
+                                  return ptr;
                                 }
                             }
                             return null;
                         }
                         
                     };
-                    indexMutations.add(maintainer.buildUpdateMutation(valueGetter, ptr, ts));
+                    indexMutations.add(maintainer.buildUpdateMutation(kvBuilder, valueGetter, ptr, ts));
                 } else {
-                    if (!maintainer.getIndexedColumns().isEmpty()) {
-                        throw new SQLExceptionInfo.Builder(SQLExceptionCode.NO_DELETE_IF_IMMUTABLE_INDEX).setSchemaName(table.getSchemaName().getString())
-                        .setTableName(table.getTableName().getString()).build().buildException();
+                    // We can only generate the correct Delete if we have no KV columns in our index.
+                    // Perhaps it'd be best to ignore Delete mutations all together here, as this
+                    // gets triggered typically for an initial population where Delete markers make
+                    // little sense.
+                    if (maintainer.getIndexedColumns().isEmpty()) {
+                        indexMutations.add(maintainer.buildDeleteMutation(kvBuilder, ptr, ts));
                     }
-                    indexMutations.add(maintainer.buildDeleteMutation(ptr, ts));
                 }
             }
             return indexMutations;
@@ -200,5 +201,14 @@ public class IndexUtil {
 
     public static boolean isDataPKColumn(PColumn column) {
         return column.getName().getString().startsWith(INDEX_COLUMN_NAME_SEP);
+    }
+    
+    public static boolean getViewConstantValue(PColumn column, ImmutableBytesWritable ptr) {
+        byte[] value = column.getViewConstant();
+        if (value != null) {
+            ptr.set(value, 0, value.length-1);
+            return true;
+        }
+        return false;
     }
 }

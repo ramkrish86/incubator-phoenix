@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,6 +17,8 @@
  */
 package org.apache.phoenix.schema;
 
+import org.apache.phoenix.util.SizedUtil;
+
 
 /**
  * 
@@ -29,11 +29,6 @@ package org.apache.phoenix.schema;
  * @since 0.1
  */
 public abstract class PBaseColumn implements PColumn {
-
-    @Override
-    public final Integer getByteSize() {
-        return getDataType().getByteSize();
-    }
 
     @Override
     public final Integer getMaxLength() {
@@ -49,4 +44,9 @@ public abstract class PBaseColumn implements PColumn {
     public boolean isNullable() {
         return false;
     }
- }
+    
+    @Override
+    public int getEstimatedSize() {
+        return SizedUtil.OBJECT_SIZE; // Not really interested in sized of these
+    }
+}

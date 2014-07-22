@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,6 +26,7 @@ import org.apache.phoenix.expression.function.RoundDecimalExpression;
 import org.apache.phoenix.expression.function.RoundTimestampExpression;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.TypeMismatchException;
+import org.apache.phoenix.util.SchemaUtil;
 
 /**
  * 
@@ -40,15 +39,22 @@ import org.apache.phoenix.schema.TypeMismatchException;
 public class CastParseNode extends UnaryParseNode {
 	
 	private final PDataType dt;
+    private final Integer maxLength;
+    private final Integer scale;
 	
-	CastParseNode(ParseNode expr, String dataType) {
-		super(expr);
-		dt = PDataType.fromSqlTypeName(dataType);
+	CastParseNode(ParseNode expr, String dataType, Integer maxLength, Integer scale, boolean arr) {
+        this(expr, PDataType.fromSqlTypeName(SchemaUtil.normalizeIdentifier(dataType)), maxLength, scale, arr);
 	}
-	
-	CastParseNode(ParseNode expr, PDataType dataType) {
-		super(expr);
-		dt = dataType;
+
+	CastParseNode(ParseNode expr, PDataType dataType, Integer maxLength, Integer scale, boolean arr) {
+        super(expr);
+        if (arr == true) {
+            dt = PDataType.fromTypeId(dataType.getSqlType() + PDataType.ARRAY_TYPE_BASE);
+        } else {
+            dt = dataType;
+        }
+        this.maxLength = maxLength;
+        this.scale = scale;
 	}
 
 	@Override
@@ -63,8 +69,16 @@ public class CastParseNode extends UnaryParseNode {
 	public PDataType getDataType() {
 		return dt;
 	}
-	
-	public static Expression convertToRoundExpressionIfNeeded(PDataType fromDataType, PDataType targetDataType, List<Expression> expressions) throws SQLException {
+
+    public Integer getMaxLength() {
+        return maxLength;
+    }
+
+    public Integer getScale() {
+        return scale;
+    }
+
+    public static Expression convertToRoundExpressionIfNeeded(PDataType fromDataType, PDataType targetDataType, List<Expression> expressions) throws SQLException {
 	    Expression firstChildExpr = expressions.get(0);
 	    if(fromDataType == targetDataType) {
 	        return firstChildExpr;

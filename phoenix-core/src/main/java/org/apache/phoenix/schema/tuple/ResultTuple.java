@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,15 +17,16 @@
  */
 package org.apache.phoenix.schema.tuple;
 
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.hbase.index.util.GenericKeyValueBuilder;
+import org.apache.phoenix.util.KeyValueUtil;
 
-import org.apache.phoenix.util.ResultUtil;
 
-
-public class ResultTuple implements Tuple {
+public class ResultTuple extends BaseTuple {
     private Result result;
     
     public ResultTuple(Result result) {
@@ -47,7 +46,7 @@ public class ResultTuple implements Tuple {
     
     @Override
     public void getKey(ImmutableBytesWritable ptr) {
-        ResultUtil.getKey(result, ptr);
+        ptr.set(result.getRow());
     }
 
     @Override
@@ -57,7 +56,9 @@ public class ResultTuple implements Tuple {
 
     @Override
     public KeyValue getValue(byte[] family, byte[] qualifier) {
-        return result.getColumnLatest(family, qualifier);
+        Cell cell = KeyValueUtil.getColumnLatest(GenericKeyValueBuilder.INSTANCE, 
+          result.rawCells(), family, qualifier);
+        return org.apache.hadoop.hbase.KeyValueUtil.ensureKeyValue(cell);
     }
 
     @Override
@@ -70,13 +71,14 @@ public class ResultTuple implements Tuple {
       }
       sb.append("{");
       boolean moreThanOne = false;
-      for(KeyValue kv : this.result.list()) {
+      for(Cell kv : this.result.listCells()) {
         if(moreThanOne) {
           sb.append(", \n");
         } else {
           moreThanOne = true;
         }
-        sb.append(kv.toString()+"/value="+Bytes.toString(kv.getValue()));
+        sb.append(kv.toString()+"/value="+Bytes.toString(kv.getValueArray(), 
+          kv.getValueOffset(), kv.getValueLength()));
       }
       sb.append("}\n");
       return sb.toString();
@@ -89,7 +91,8 @@ public class ResultTuple implements Tuple {
 
     @Override
     public KeyValue getValue(int index) {
-        return result.raw()[index];
+        return  org.apache.hadoop.hbase.KeyValueUtil.ensureKeyValue(
+          result.rawCells()[index]);
     }
 
     @Override
@@ -98,7 +101,7 @@ public class ResultTuple implements Tuple {
         KeyValue kv = getValue(family, qualifier);
         if (kv == null)
             return false;
-        ptr.set(kv.getBuffer(), kv.getValueOffset(), kv.getValueLength());
+        ptr.set(kv.getValueArray(), kv.getValueOffset(), kv.getValueLength());
         return true;
     }
 }

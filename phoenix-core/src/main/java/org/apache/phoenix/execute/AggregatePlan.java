@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,6 +26,7 @@ import org.apache.phoenix.compile.GroupByCompiler.GroupBy;
 import org.apache.phoenix.compile.OrderByCompiler.OrderBy;
 import org.apache.phoenix.compile.RowProjector;
 import org.apache.phoenix.compile.StatementContext;
+import org.apache.phoenix.coprocessor.BaseScannerRegionObserver;
 import org.apache.phoenix.coprocessor.UngroupedAggregateRegionObserver;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.OrderByExpression;
@@ -53,6 +52,7 @@ import org.apache.phoenix.parse.FilterableStatement;
 import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
+import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.TableRef;
 
 
@@ -78,6 +78,10 @@ public class AggregatePlan extends BasicQueryPlan {
         this.aggregators = context.getAggregationManager().getAggregators();
     }
 
+    public Expression getHaving() {
+        return having;
+    }
+    
     @Override
     public List<KeyRange> getSplits() {
         return splits;
@@ -90,7 +94,7 @@ public class AggregatePlan extends BasicQueryPlan {
             this.services = services;
         }
         @Override
-        public PeekingResultIterator newIterator(ResultIterator scanner) throws SQLException {
+        public PeekingResultIterator newIterator(StatementContext context, ResultIterator scanner) throws SQLException {
             Expression expression = RowKeyExpression.INSTANCE;
             OrderByExpression orderByExpression = new OrderByExpression(expression, false, true);
             int threshold = services.getProps().getInt(QueryServices.SPOOL_THRESHOLD_BYTES_ATTRIB, QueryServicesOptions.DEFAULT_SPOOL_THRESHOLD_BYTES);
@@ -107,9 +111,9 @@ public class AggregatePlan extends BasicQueryPlan {
             this.outerFactory = outerFactory;
         }
         @Override
-        public PeekingResultIterator newIterator(ResultIterator scanner) throws SQLException {
-            PeekingResultIterator iterator = innerFactory.newIterator(scanner);
-            return outerFactory.newIterator(iterator);
+        public PeekingResultIterator newIterator(StatementContext context, ResultIterator scanner) throws SQLException {
+            PeekingResultIterator iterator = innerFactory.newIterator(context, scanner);
+            return outerFactory.newIterator(context, iterator);
         }
     }
 
@@ -132,6 +136,32 @@ public class AggregatePlan extends BasicQueryPlan {
     protected ResultIterator newIterator() throws SQLException {
         if (groupBy.isEmpty()) {
             UngroupedAggregateRegionObserver.serializeIntoScan(context.getScan());
+        } else if (limit != null && orderBy.getOrderByExpressions().isEmpty() && having == null
+                && (  (   statement.isDistinct() && ! statement.isAggregate() )
+                   || ( ! statement.isDistinct() && (   context.getAggregationManager().isEmpty()
+                                                     || BaseScannerRegionObserver.KEY_ORDERED_GROUP_BY_EXPRESSIONS.equals(groupBy.getScanAttribName()) ) ) ) ) {
+            /*
+             * Optimization to early exit from the scan for a GROUP BY or DISTINCT with a LIMIT.
+             * We may exit early according to the LIMIT specified if the query has:
+             * 1) No ORDER BY clause (or the ORDER BY was optimized out). We cannot exit
+             *    early if there's an ORDER BY because the first group may be found last
+             *    in the scan.
+             * 2) No HAVING clause, since we execute the HAVING on the client side. The LIMIT
+             *    needs to be evaluated *after* the HAVING.
+             * 3) DISTINCT clause with no GROUP BY. We cannot exit early if there's a
+             *    GROUP BY, as the GROUP BY is processed on the client-side post aggregation
+             *    if a DISTNCT has a GROUP BY. Otherwise, since there are no aggregate
+             *    functions in a DISTINCT, we can exit early regardless of if the
+             *    groups are in row key order or unordered.
+             * 4) GROUP BY clause with no aggregate functions. This is in the same category
+             *    as (3). If we're using aggregate functions, we need to look at all the
+             *    rows, as otherwise we'd exit early with incorrect aggregate function
+             *    calculations.
+             * 5) GROUP BY clause along the pk axis, as the rows are processed in row key
+             *    order, so we can early exit, even when aggregate functions are used, as
+             *    the rows in the group are contiguous.
+             */
+            context.getScan().setAttribute(BaseScannerRegionObserver.GROUP_BY_LIMIT, PDataType.INTEGER.toBytes(limit));
         }
         ParallelIterators parallelIterators = new ParallelIterators(context, tableRef, statement, projection, groupBy, null, wrapParallelIteratorFactory());
         splits = parallelIterators.getSplits();
@@ -158,11 +188,10 @@ public class AggregatePlan extends BasicQueryPlan {
                 resultScanner = new LimitingResultIterator(aggResultIterator, limit);
             }
         } else {
-            int thresholdBytes = getConnectionQueryServices(context.getConnection().getQueryServices()).getProps().getInt(
+            int thresholdBytes = context.getConnection().getQueryServices().getProps().getInt(
                     QueryServices.SPOOL_THRESHOLD_BYTES_ATTRIB, QueryServicesOptions.DEFAULT_SPOOL_THRESHOLD_BYTES);
             resultScanner = new OrderedAggregatingResultIterator(aggResultIterator, orderBy.getOrderByExpressions(), thresholdBytes, limit);
         }
-        
         if (context.getSequenceManager().getSequenceCount() > 0) {
             resultScanner = new SequenceResultIterator(resultScanner, context.getSequenceManager());
         }

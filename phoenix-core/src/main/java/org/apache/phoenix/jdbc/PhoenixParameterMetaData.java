@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,9 +24,9 @@ import java.sql.SQLException;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.parse.BindParseNode;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PDatum;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TypeMismatchException;
 
 
@@ -64,13 +62,8 @@ public class PhoenixParameterMetaData implements ParameterMetaData {
         }
         
         @Override
-        public ColumnModifier getColumnModifier() {
-            return null;
-        }
-        
-        @Override
-        public Integer getByteSize() {
-            return null;
+        public SortOrder getSortOrder() {
+            return SortOrder.getDefault();
         }
     };
     public static final PhoenixParameterMetaData EMPTY_PARAMETER_META_DATA = new PhoenixParameterMetaData(0);

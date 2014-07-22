@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,9 +17,12 @@
  */
 package org.apache.phoenix.filter;
 
+import java.io.IOException;
 import java.util.TreeSet;
 
+import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Writables;
 
 import org.apache.phoenix.expression.Expression;
 
@@ -130,5 +131,13 @@ public class MultiCFCQKeyValueComparisonFilter extends MultiKeyValueComparisonFi
         // Only the column families involved in the expression are essential.
         // The others are for columns projected in the select expression.
         return cfSet.contains(name);
+    }
+    
+    public static MultiCFCQKeyValueComparisonFilter parseFrom(final byte [] pbBytes) throws DeserializationException {
+        try {
+            return (MultiCFCQKeyValueComparisonFilter)Writables.getWritable(pbBytes, new MultiCFCQKeyValueComparisonFilter());
+        } catch (IOException e) {
+            throw new DeserializationException(e);
+        }
     }
 }

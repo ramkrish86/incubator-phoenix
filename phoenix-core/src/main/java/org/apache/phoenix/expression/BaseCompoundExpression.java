@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,9 +24,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.hadoop.io.WritableUtils;
+import org.apache.phoenix.expression.visitor.ExpressionVisitor;
 
 import com.google.common.collect.ImmutableList;
-import org.apache.phoenix.expression.visitor.ExpressionVisitor;
 
 
 public abstract class BaseCompoundExpression extends BaseExpression {
@@ -36,6 +34,7 @@ public abstract class BaseCompoundExpression extends BaseExpression {
     private boolean isNullable;
     private boolean isStateless;
     private boolean isDeterministic;
+    private boolean requiresFinalEvaluation;
    
     public BaseCompoundExpression() {
     }
@@ -49,15 +48,18 @@ public abstract class BaseCompoundExpression extends BaseExpression {
         boolean isStateless = true;
         boolean isDeterministic = true;
         boolean isNullable = false;
+        boolean requiresFinalEvaluation = false;
         for (int i = 0; i < children.size(); i++) {
             Expression child = children.get(i);
             isNullable |= child.isNullable();
             isStateless &= child.isStateless();
             isDeterministic &= child.isDeterministic();
+            requiresFinalEvaluation |= child.requiresFinalEvaluation();
         }
         this.isStateless = isStateless;
         this.isDeterministic = isDeterministic;
         this.isNullable = isNullable;
+        this.requiresFinalEvaluation = requiresFinalEvaluation;
     }
     
     @Override
@@ -141,5 +143,10 @@ public abstract class BaseCompoundExpression extends BaseExpression {
     @Override
     public String toString() {
         return this.getClass().getName() + " [children=" + children + "]";
+    }
+    
+    @Override
+    public boolean requiresFinalEvaluation() {
+        return requiresFinalEvaluation;
     }
 }

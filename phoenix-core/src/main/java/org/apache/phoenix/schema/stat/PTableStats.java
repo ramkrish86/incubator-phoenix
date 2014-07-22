@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,8 +17,7 @@
  */
 package org.apache.phoenix.schema.stat;
 
-import java.io.DataOutput;
-import java.io.IOException;
+import java.util.Map;
 
 import org.apache.hadoop.hbase.HRegionInfo;
 
@@ -43,5 +40,5 @@ public interface PTableStats {
      */
     byte[][] getRegionGuidePosts(HRegionInfo region);
 
-    void write(DataOutput output) throws IOException;
+    Map<String, byte[][]> getGuidePosts();
 }

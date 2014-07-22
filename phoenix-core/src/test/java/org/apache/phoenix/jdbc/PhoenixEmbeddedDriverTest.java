@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.phoenix.jdbc;
 
 import static org.junit.Assert.*;
@@ -75,15 +93,15 @@ public class PhoenixEmbeddedDriverTest {
             "jdbc:phoenix:v1,v2,v3:123::/hbase",
             "jdbc:phoenix:v1,v2,v3:123::/hbase;test=false",
         };
-        for (int i = 0; i < urls.length; i++) {
+        for (String url : urls) {
             try {
-                ConnectionInfo.create(urls[i]);
-                throw new AssertionError("Expected exception for \"" + urls[i] + "\"");
+                ConnectionInfo.create(url);
+                throw new AssertionError("Expected exception for \"" + url + "\"");
             } catch (SQLException e) {
                 try {
                     assertEquals(SQLExceptionCode.MALFORMED_CONNECTION_URL.getSQLState(), e.getSQLState());
                 } catch (AssertionError ae) {
-                    throw new AssertionError("For \"" + urls[i] + "\": " + ae.getMessage());
+                    throw new AssertionError("For \"" + url + "\": " + ae.getMessage());
                 }
             }
         }

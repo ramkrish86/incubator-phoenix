@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,9 +27,6 @@ import java.util.Map;
 
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.util.Pair;
-
-import com.google.common.collect.ListMultimap;
-import com.google.common.collect.Maps;
 import org.apache.phoenix.exception.UnknownFunctionException;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.ExpressionType;
@@ -44,12 +39,15 @@ import org.apache.phoenix.expression.function.FunctionExpression;
 import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
 import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunctionInfo;
 import org.apache.phoenix.parse.JoinTableNode.JoinType;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PIndexState;
 import org.apache.phoenix.schema.PTableType;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TypeMismatchException;
 import org.apache.phoenix.util.SchemaUtil;
+
+import com.google.common.collect.ListMultimap;
+import com.google.common.collect.Maps;
 
 
 /**
@@ -208,6 +206,10 @@ public class ParseNodeFactory {
     public FamilyWildcardParseNode family(String familyName){
     	    return new FamilyWildcardParseNode(familyName, false);
     }
+    
+    public TableWildcardParseNode tableWildcard(TableName tableName) {
+        return new TableWildcardParseNode(tableName, false);
+    }
 
     public WildcardParseNode wildcard() {
         return WildcardParseNode.INSTANCE;
@@ -245,17 +247,17 @@ public class ParseNodeFactory {
         return new PropertyName(familyName, propertyName);
     }
 
-    public ColumnDef columnDef(ColumnName columnDefName, String sqlTypeName, boolean isNull, Integer maxLength, Integer scale, boolean isPK, ColumnModifier columnModifier) {
-        return new ColumnDef(columnDefName, sqlTypeName, isNull, maxLength, scale, isPK, columnModifier);
+    public ColumnDef columnDef(ColumnName columnDefName, String sqlTypeName, boolean isNull, Integer maxLength, Integer scale, boolean isPK, SortOrder sortOrder) {
+        return new ColumnDef(columnDefName, sqlTypeName, isNull, maxLength, scale, isPK, sortOrder);
     }
     
-    public ColumnDef columnDef(ColumnName columnDefName, String sqlTypeName, boolean isArray, Integer arrSize, boolean isNull, Integer maxLength, Integer scale, boolean isPK, 
-        	ColumnModifier columnModifier) {
-        return new ColumnDef(columnDefName, sqlTypeName, isArray, arrSize, isNull, maxLength, scale, isPK, columnModifier);
+    public ColumnDef columnDef(ColumnName columnDefName, String sqlTypeName, boolean isArray, Integer arrSize, Boolean isNull, Integer maxLength, Integer scale, boolean isPK, 
+        	SortOrder sortOrder) {
+        return new ColumnDef(columnDefName, sqlTypeName, isArray, arrSize, isNull, maxLength, scale, isPK, sortOrder);
     }
 
-    public PrimaryKeyConstraint primaryKey(String name, List<Pair<ColumnName, ColumnModifier>> columnNameAndModifier) {
-        return new PrimaryKeyConstraint(name, columnNameAndModifier);
+    public PrimaryKeyConstraint primaryKey(String name, List<Pair<ColumnName, SortOrder>> columnNameAndSortOrder) {
+        return new PrimaryKeyConstraint(name, columnNameAndSortOrder);
     }
     
     public CreateTableStatement createTable(TableName tableName, ListMultimap<String,Pair<String,Object>> props, List<ColumnDef> columns, PrimaryKeyConstraint pkConstraint, List<ParseNode> splits, PTableType tableType, boolean ifNotExists, TableName baseTableName, ParseNode tableTypeIdNode, int bindCount) {
@@ -395,8 +397,20 @@ public class ParseNodeFactory {
         return new IsNullParseNode(child, negate);
     }
 
-    public JoinTableNode join (JoinType type, ParseNode on, TableNode table) {
-        return new JoinTableNode(type, on, table);
+    public TableNode table(TableNode table, List<JoinPartNode> parts) {
+        for (JoinPartNode part : parts) {
+            table = new JoinTableNode(part.getType(), table, part.getTable(), part.getOnNode());
+        }
+        
+        return table;
+    }
+    
+    JoinPartNode joinPart(JoinType type, ParseNode onNode, TableNode table) {
+        return new JoinPartNode(type, onNode, table);
+    }
+
+    public JoinTableNode join(JoinType type, TableNode lhs, TableNode rhs, ParseNode on) {
+        return new JoinTableNode(type, lhs, rhs, on);
     }
 
     public DerivedTableNode derivedTable (String alias, SelectStatement select) {
@@ -411,13 +425,21 @@ public class ParseNodeFactory {
     public LiteralParseNode literal(Object value) {
         return new LiteralParseNode(value);
     }
-    
-    public CastParseNode cast(ParseNode expression, String dataType) {
-    	return new CastParseNode(expression, dataType);
+
+    public CastParseNode cast(ParseNode expression, String dataType, Integer maxLength, Integer scale) {
+        return new CastParseNode(expression, dataType, maxLength, scale, false);
     }
-    
-    public CastParseNode cast(ParseNode expression, PDataType dataType) {
-    	return new CastParseNode(expression, dataType);
+
+    public CastParseNode cast(ParseNode expression, PDataType dataType, Integer maxLength, Integer scale) {
+        return new CastParseNode(expression, dataType, maxLength, scale, false);
+    }
+
+    public CastParseNode cast(ParseNode expression, PDataType dataType, Integer maxLength, Integer scale, boolean arr) {
+        return new CastParseNode(expression, dataType, maxLength, scale, arr);
+    }
+
+    public CastParseNode cast(ParseNode expression, String dataType, Integer maxLength, Integer scale, boolean arr) {
+        return new CastParseNode(expression, dataType, maxLength, scale, arr);
     }
     
     public ParseNode rowValueConstructor(List<ParseNode> l) {

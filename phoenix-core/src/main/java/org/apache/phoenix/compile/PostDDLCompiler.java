@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,7 +27,7 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.phoenix.cache.ServerCacheClient.ServerCache;
 import org.apache.phoenix.compile.GroupByCompiler.GroupBy;
 import org.apache.phoenix.compile.OrderByCompiler.OrderBy;
-import org.apache.phoenix.coprocessor.UngroupedAggregateRegionObserver;
+import org.apache.phoenix.coprocessor.BaseScannerRegionObserver;
 import org.apache.phoenix.execute.AggregatePlan;
 import org.apache.phoenix.execute.MutationState;
 import org.apache.phoenix.iterate.ResultIterator;
@@ -38,10 +36,14 @@ import org.apache.phoenix.jdbc.PhoenixParameterMetaData;
 import org.apache.phoenix.jdbc.PhoenixStatement;
 import org.apache.phoenix.parse.SelectStatement;
 import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.schema.AmbiguousColumnException;
+import org.apache.phoenix.schema.ColumnFamilyNotFoundException;
+import org.apache.phoenix.schema.ColumnNotFoundException;
 import org.apache.phoenix.schema.ColumnRef;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PColumnFamily;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.TableNotFoundException;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ScanUtil;
@@ -63,9 +65,11 @@ import com.google.common.collect.Lists;
  */
 public class PostDDLCompiler {
     private final PhoenixConnection connection;
+    private final StatementContext context; // bogus context
 
     public PostDDLCompiler(PhoenixConnection connection) {
         this.connection = connection;
+        this.context = new StatementContext(new PhoenixStatement(connection));
     }
 
     public MutationPlan compile(final List<TableRef> tableRefs, final byte[] emptyCF, final byte[] projectCF, final List<PColumn> deleteList,
@@ -109,13 +113,18 @@ public class PostDDLCompiler {
                     long totalMutationCount = 0;
                     for (final TableRef tableRef : tableRefs) {
                         Scan scan = new Scan();
-                        scan.setAttribute(UngroupedAggregateRegionObserver.UNGROUPED_AGG, QueryConstants.TRUE);
+                        scan.setAttribute(BaseScannerRegionObserver.UNGROUPED_AGG, QueryConstants.TRUE);
                         SelectStatement select = SelectStatement.COUNT_ONE;
                         // We need to use this tableRef
                         ColumnResolver resolver = new ColumnResolver() {
                             @Override
                             public List<TableRef> getTables() {
                                 return Collections.singletonList(tableRef);
+                            }
+                            @Override
+                            public TableRef resolveTable(String schemaName, String tableName)
+                                    throws SQLException {
+                                throw new UnsupportedOperationException();
                             }
                             @Override
                             public ColumnRef resolveColumn(String schemaName, String tableName, String colName) throws SQLException {
@@ -125,18 +134,18 @@ public class PostDDLCompiler {
                                 return new ColumnRef(tableRef, column.getPosition());
                             }
                         };
-                        StatementContext context = new StatementContext(new PhoenixStatement(connection), resolver, Collections.<Object>emptyList(), scan);
+                        StatementContext context = new StatementContext(new PhoenixStatement(connection), resolver, scan);
                         ScanUtil.setTimeRange(scan, timestamp);
                         if (emptyCF != null) {
-                            scan.setAttribute(UngroupedAggregateRegionObserver.EMPTY_CF, emptyCF);
+                            scan.setAttribute(BaseScannerRegionObserver.EMPTY_CF, emptyCF);
                         }
                         ServerCache cache = null;
                         try {
                             if (deleteList != null) {
                                 if (deleteList.isEmpty()) {
-                                    scan.setAttribute(UngroupedAggregateRegionObserver.DELETE_AGG, QueryConstants.TRUE);
+                                    scan.setAttribute(BaseScannerRegionObserver.DELETE_AGG, QueryConstants.TRUE);
                                     // In the case of a row deletion, add index metadata so mutable secondary indexing works
-                                    /* TODO
+                                    /* TODO: we currently manually run a scan to delete the index data here
                                     ImmutableBytesWritable ptr = context.getTempPtr();
                                     tableRef.getTable().getIndexMaintainers(ptr);
                                     if (ptr.getLength() > 0) {
@@ -155,8 +164,8 @@ public class PostDDLCompiler {
                                     if (emptyCF == null) {
                                         scan.addColumn(column.getFamilyName().getBytes(), column.getName().getBytes());
                                     }
-                                    scan.setAttribute(UngroupedAggregateRegionObserver.DELETE_CF, column.getFamilyName().getBytes());
-                                    scan.setAttribute(UngroupedAggregateRegionObserver.DELETE_CQ, column.getName().getBytes());
+                                    scan.setAttribute(BaseScannerRegionObserver.DELETE_CF, column.getFamilyName().getBytes());
+                                    scan.setAttribute(BaseScannerRegionObserver.DELETE_CQ, column.getName().getBytes());
                                 }
                             }
                             List<byte[]> columnFamilies = Lists.newArrayListWithExpectedSize(tableRef.getTable().getColumnFamilies().size());
@@ -178,29 +187,47 @@ public class PostDDLCompiler {
                                 }
                                 projector = new RowProjector(projector,false);
                             }
-                            WhereCompiler.compile(context, select); // Push where clause into scan
-                            QueryPlan plan = new AggregatePlan(context, select, tableRef, projector, null, OrderBy.EMPTY_ORDER_BY, null, GroupBy.EMPTY_GROUP_BY, null);
-                            ResultIterator iterator = plan.iterator();
+                            // Ignore exceptions due to not being able to resolve any view columns,
+                            // as this just means the view is invalid. Continue on and try to perform
+                            // any other Post DDL operations.
                             try {
-                                Tuple row = iterator.next();
-                                ImmutableBytesWritable ptr = context.getTempPtr();
-                                totalMutationCount += (Long)projector.getColumnProjector(0).getValue(row, PDataType.LONG, ptr);
-                            } catch (SQLException e) {
-                                sqlE = e;
-                            } finally {
+                                // Since dropping a VIEW does not affect the underlying data, we do
+                                // not need to pass through the view statement here.
+                                WhereCompiler.compile(context, select); // Push where clause into scan
+                            } catch (ColumnFamilyNotFoundException e) {
+                                continue;
+                            } catch (ColumnNotFoundException e) {
+                                continue;
+                            } catch (AmbiguousColumnException e) {
+                                continue;
+                            }
+                            QueryPlan plan = new AggregatePlan(context, select, tableRef, projector, null, OrderBy.EMPTY_ORDER_BY, null, GroupBy.EMPTY_GROUP_BY, null);
+                            try {
+                                ResultIterator iterator = plan.iterator();
                                 try {
-                                    iterator.close();
+                                    Tuple row = iterator.next();
+                                    ImmutableBytesWritable ptr = context.getTempPtr();
+                                    totalMutationCount += (Long)projector.getColumnProjector(0).getValue(row, PDataType.LONG, ptr);
                                 } catch (SQLException e) {
-                                    if (sqlE == null) {
-                                        sqlE = e;
-                                    } else {
-                                        sqlE.setNextException(e);
-                                    }
+                                    sqlE = e;
                                 } finally {
-                                    if (sqlE != null) {
-                                        throw sqlE;
+                                    try {
+                                        iterator.close();
+                                    } catch (SQLException e) {
+                                        if (sqlE == null) {
+                                            sqlE = e;
+                                        } else {
+                                            sqlE.setNextException(e);
+                                        }
+                                    } finally {
+                                        if (sqlE != null) {
+                                            throw sqlE;
+                                        }
                                     }
                                 }
+                            } catch (TableNotFoundException e) {
+                                // Ignore and continue, as HBase throws when table hasn't been written to
+                                // FIXME: Remove if this is fixed in 0.96
                             }
                         } finally {
                             if (cache != null) { // Remove server cache if there is one
@@ -219,6 +246,11 @@ public class PostDDLCompiler {
                 } finally {
                     if (!wasAutoCommit) connection.setAutoCommit(wasAutoCommit);
                 }
+            }
+
+            @Override
+            public StatementContext getContext() {
+                return context;
             }
         };
     }

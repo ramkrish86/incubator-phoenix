@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,8 +20,9 @@ package org.apache.phoenix.parse;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.google.common.collect.ImmutableMap;
 import org.apache.phoenix.util.SchemaUtil;
+
+import com.google.common.collect.ImmutableMap;
 
 
 /**
@@ -79,6 +78,20 @@ public class HintNode {
         * Avoid caching any HBase blocks loaded by this query.
         */
        NO_CACHE,
+       /**
+        * Avoid using star-join optimization.
+        */
+       NO_STAR_JOIN,
+       /**
+        * Avoid using the no seek optimization. When there are many columns which are not selected coming in between 2
+        * selected columns and/or versions of columns, this should be used.
+        */
+      SEEK_TO_COLUMN,
+       /**
+        * Avoid seeks to select specified columns. When there are very less number of columns which are not selected in
+        * between 2 selected columns this will be give better performance.
+        */
+      NO_SEEK_TO_COLUMN,
     };
 
     private final Map<Hint,String> hints;
@@ -90,6 +103,12 @@ public class HintNode {
     public static HintNode create(HintNode hintNode, Hint hint, String value) {
         Map<Hint,String> hints = new HashMap<Hint,String>(hintNode.hints);
         hints.put(hint, value);
+        return new HintNode(hints);
+    }
+    
+    public static HintNode combine(HintNode hintNode, HintNode override) {
+        Map<Hint,String> hints = new HashMap<Hint,String>(hintNode.hints);
+        hints.putAll(override.hints);
         return new HintNode(hints);
     }
     

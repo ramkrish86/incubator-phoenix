@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,7 +20,6 @@ package org.apache.phoenix.compile;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -89,18 +86,20 @@ import org.apache.phoenix.parse.SequenceValueParseNode;
 import org.apache.phoenix.parse.StringConcatParseNode;
 import org.apache.phoenix.parse.SubtractParseNode;
 import org.apache.phoenix.parse.UnsupportedAllParseNodeVisitor;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.ColumnNotFoundException;
 import org.apache.phoenix.schema.ColumnRef;
 import org.apache.phoenix.schema.DelegateDatum;
 import org.apache.phoenix.schema.PArrayDataType;
+import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PDatum;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.RowKeyValueAccessor;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.TypeMismatchException;
+import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.SchemaUtil;
 
 
@@ -110,14 +109,24 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
     protected final StatementContext context;
     protected final GroupBy groupBy;
     private int nodeCount;
+    private final boolean resolveViewConstants;
     
     ExpressionCompiler(StatementContext context) {
-        this(context,GroupBy.EMPTY_GROUP_BY);
+        this(context,GroupBy.EMPTY_GROUP_BY, false);
+    }
+
+    ExpressionCompiler(StatementContext context, boolean resolveViewConstants) {
+        this(context,GroupBy.EMPTY_GROUP_BY, resolveViewConstants);
     }
 
     ExpressionCompiler(StatementContext context, GroupBy groupBy) {
+        this(context, groupBy, false);
+    }
+
+    ExpressionCompiler(StatementContext context, GroupBy groupBy, boolean resolveViewConstants) {
         this.context = context;
         this.groupBy = groupBy;
+        this.resolveViewConstants = resolveViewConstants;
     }
 
     public boolean isAggregate() {
@@ -179,7 +188,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
         } else {
             addBindParamMetaData(lhsNode, rhsNode, lhsExpr, rhsExpr);
         }
-        return ComparisonExpression.create(op, children, context.getTempPtr());
+        return wrapGroupByExpression(ComparisonExpression.create(op, children, context.getTempPtr()));
     }
 
     @Override
@@ -189,7 +198,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
 
     @Override
     public Expression visitLeave(AndParseNode node, List<Expression> children) throws SQLException {
-        return AndExpression.create(children);
+        return wrapGroupByExpression(AndExpression.create(children));
     }
 
     @Override
@@ -224,7 +233,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
 
     @Override
     public Expression visitLeave(OrParseNode node, List<Expression> children) throws SQLException {
-        return orExpression(children);
+        return wrapGroupByExpression(orExpression(children));
     }
 
     @Override
@@ -314,11 +323,12 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
         ColumnRef ref = context.getResolver().resolveColumn(node.getSchemaName(), node.getTableName(), node.getName());
         PTable table = ref.getTable();
         int pkPosition = ref.getPKSlotPosition();
-        // Disallow explicit reference to SALT or TENANT_ID columns
+        // Disallow explicit reference to salting column, tenant ID column, and index ID column
         if (pkPosition >= 0) {
             boolean isSalted = table.getBucketNum() != null;
             boolean isMultiTenant = context.getConnection().getTenantId() != null && table.isMultiTenant();
-            int minPosition = (isSalted ? 1 : 0) + (isMultiTenant ? 1 : 0);
+            boolean isSharedViewIndex = table.getViewIndexId() != null;
+            int minPosition = (isSalted ? 1 : 0) + (isMultiTenant ? 1 : 0) + (isSharedViewIndex ? 1 : 0);
             if (pkPosition < minPosition) {
                 throw new ColumnNotFoundException(table.getSchemaName().getString(), table.getTableName().getString(), null, ref.getColumn().getName().getString());
             }
@@ -330,9 +340,17 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
     public Expression visit(ColumnParseNode node) throws SQLException {
         ColumnRef ref = resolveColumn(node);
         TableRef tableRef = ref.getTableRef();
-        if (tableRef.equals(context.getCurrentTable()) 
-                && !SchemaUtil.isPKColumn(ref.getColumn())) { // project only kv columns
-            context.getScan().addColumn(ref.getColumn().getFamilyName().getBytes(), ref.getColumn().getName().getBytes());
+        ImmutableBytesWritable ptr = context.getTempPtr();
+        PColumn column = ref.getColumn();
+        // If we have an UPDATABLE view, then we compile those view constants (i.e. columns in equality constraints
+        // in the view) to constants. This allows the optimize to optimize out reference to them in various scenarios.
+        // If the column is matched in a WHERE clause against a constant not equal to it's constant, then the entire
+        // query would become degenerate.
+        if (!resolveViewConstants && IndexUtil.getViewConstantValue(column, ptr)) {
+            return LiteralExpression.newConstant(column.getDataType().toObject(ptr), column.getDataType());
+        }
+        if (tableRef.equals(context.getCurrentTable()) && !SchemaUtil.isPKColumn(column)) { // project only kv columns
+            context.getScan().addColumn(column.getFamilyName().getBytes(), column.getName().getBytes());
         }
         Expression expression = ref.newColumnExpression();
         Expression wrappedExpression = wrapGroupByExpression(expression);
@@ -436,13 +454,13 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
             // to return NULL.
             int index = LikeExpression.indexOfWildcard(pattern);
             // Can't possibly be as long as the constant, then FALSE
-            Integer lhsByteSize = lhs.getByteSize();
-            if (lhsByteSize != null && lhsByteSize < index) {
+            Integer lhsMaxLength = lhs.getMaxLength();
+            if (lhsMaxLength != null && lhsMaxLength < index) {
                 return LiteralExpression.newConstant(false, rhs.isDeterministic());
             }
             if (index == -1) {
                 String rhsLiteral = LikeExpression.unescapeLike(pattern);
-                if (lhsByteSize != null && lhsByteSize != rhsLiteral.length()) {
+                if (lhsMaxLength != null && lhsMaxLength != rhsLiteral.length()) {
                     return LiteralExpression.newConstant(false, rhs.isDeterministic());
                 }
                 CompareOp op = node.isNegate() ? CompareOp.NOT_EQUAL : CompareOp.EQUAL;
@@ -466,7 +484,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
         if (node.isNegate()) {
             expression = new NotExpression(expression);
         }
-        return expression;
+        return wrapGroupByExpression(expression);
     }
 
 
@@ -485,7 +503,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
         if (childNode instanceof BindParseNode) { // TODO: valid/possibe?
             context.getBindManager().addParamMetaData((BindParseNode)childNode, child);
         }
-        return NotExpression.create(child, context.getTempPtr());
+        return wrapGroupByExpression(NotExpression.create(child, context.getTempPtr()));
     }
 
     @Override
@@ -515,7 +533,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                 expr =  CastParseNode.convertToRoundExpressionIfNeeded(fromDataType, targetDataType, children);
             }
         }
-        return CoerceExpression.create(expr, targetDataType); 
+        return CoerceExpression.create(expr, targetDataType, SortOrder.getDefault(), expr.getMaxLength());  
     }
     
    @Override
@@ -544,7 +562,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                 context.getBindManager().addParamMetaData((BindParseNode)childNode, firstChild);
             }
         }
-        return InListExpression.create(inChildren, node.isNegate(), ptr);
+        return wrapGroupByExpression(InListExpression.create(inChildren, node.isNegate(), ptr));
     }
 
     private static final PDatum DECIMAL_DATUM = new PDatum() {
@@ -557,20 +575,16 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
             return PDataType.DECIMAL;
         }
         @Override
-        public Integer getByteSize() {
-            return null;
-        }
-        @Override
         public Integer getMaxLength() {
             return null;
         }
         @Override
         public Integer getScale() {
-            return PDataType.DEFAULT_SCALE;
+            return null;
         }
         @Override
-        public ColumnModifier getColumnModifier() {
-            return null;
+        public SortOrder getSortOrder() {
+            return SortOrder.getDefault();
         }        
     };
 
@@ -612,7 +626,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
         if (childNode instanceof BindParseNode) { // TODO: valid/possibe?
             context.getBindManager().addParamMetaData((BindParseNode)childNode, child);
         }
-        return IsNullExpression.create(child, node.isNegate(), context.getTempPtr());
+        return wrapGroupByExpression(IsNullExpression.create(child, node.isNegate(), context.getTempPtr()));
     }
 
     private static interface ArithmeticExpressionFactory {
@@ -684,10 +698,6 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                             return type;
                         }
                         @Override
-                        public Integer getByteSize() {
-                            return type.getByteSize();
-                        }
-                        @Override
                         public Integer getMaxLength() {
                             return expression.getMaxLength();
                         }
@@ -696,8 +706,8 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                             return expression.getScale();
                         }
                         @Override
-                        public ColumnModifier getColumnModifier() {
-                            return expression.getColumnModifier();
+                        public SortOrder getSortOrder() {
+                            return expression.getSortOrder();
                         }                        
                     };
                 } else if (expression.getDataType() != null
@@ -713,10 +723,6 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                             return PDataType.DECIMAL;
                         }
                         @Override
-                        public Integer getByteSize() {
-                            return null;
-                        }
-                        @Override
                         public Integer getMaxLength() {
                             return expression.getMaxLength();
                         }
@@ -725,8 +731,8 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                             return expression.getScale();
                         }
                         @Override
-                        public ColumnModifier getColumnModifier() {
-                            return expression.getColumnModifier();
+                        public SortOrder getSortOrder() {
+                            return expression.getSortOrder();
                         }
                     };
                 }
@@ -861,10 +867,6 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                             return PDataType.DECIMAL;
                         }
                         @Override
-                        public Integer getByteSize() {
-                            return null;
-                        }
-                        @Override
                         public Integer getMaxLength() {
                             return expression.getMaxLength();
                         }
@@ -873,8 +875,8 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                             return expression.getScale();
                         }
                         @Override
-                        public ColumnModifier getColumnModifier() {
-                            return expression.getColumnModifier();
+                        public SortOrder getSortOrder() {
+                            return expression.getSortOrder();
                         }
                     };
                 }
@@ -1086,7 +1088,7 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
     public Expression visitLeave(RowValueConstructorParseNode node, List<Expression> l) throws SQLException {
         // Don't trim trailing nulls here, as we'd potentially be dropping bind
         // variables that aren't bound yet.
-        return new RowValueConstructorExpression(l, node.isStateless());
+        return wrapGroupByExpression(new RowValueConstructorExpression(l, node.isStateless()));
     }
 
 	@Override
@@ -1151,12 +1153,12 @@ public class ExpressionCompiler extends UnsupportedAllParseNodeVisitor<Expressio
                 Expression child = children.get(i);
                 isDeterministic &= child.isDeterministic();
                 child.evaluate(null, ptr);
-                Object value = arrayElemDataType.toObject(ptr, child.getDataType(), child.getColumnModifier());
+                Object value = arrayElemDataType.toObject(ptr, child.getDataType(), child.getSortOrder());
                 elements[i] = LiteralExpression.newConstant(value, child.getDataType(), child.isDeterministic()).getValue();
             }
             Object value = PArrayDataType.instantiatePhoenixArray(arrayElemDataType, elements);
             return LiteralExpression.newConstant(value,
-                    PDataType.fromTypeId(arrayElemDataType.getSqlType() + Types.ARRAY), isDeterministic);
+                    PDataType.fromTypeId(arrayElemDataType.getSqlType() + PDataType.ARRAY_TYPE_BASE), isDeterministic);
         }
         
         ArrayConstructorExpression arrayExpression = new ArrayConstructorExpression(children, arrayElemDataType);

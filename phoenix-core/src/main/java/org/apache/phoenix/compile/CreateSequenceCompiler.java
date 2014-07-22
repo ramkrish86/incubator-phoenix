@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,9 +21,7 @@ import java.sql.ParameterMetaData;
 import java.sql.SQLException;
 import java.util.Collections;
 
-import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.execute.MutationState;
@@ -37,10 +33,10 @@ import org.apache.phoenix.parse.CreateSequenceStatement;
 import org.apache.phoenix.parse.ParseNode;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.MetaDataClient;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PDatum;
+import org.apache.phoenix.schema.SortOrder;
 
 
 public class CreateSequenceCompiler {
@@ -63,11 +59,6 @@ public class CreateSequenceCompiler {
         }
 
         @Override
-        public Integer getByteSize() {
-            return PDataType.LONG.getByteSize();
-        }
-
-        @Override
         public Integer getMaxLength() {
             return null;
         }
@@ -78,8 +69,8 @@ public class CreateSequenceCompiler {
         }
 
         @Override
-        public ColumnModifier getColumnModifier() {
-            return null;
+        public SortOrder getSortOrder() {
+            return SortOrder.getDefault();
         }
         
     }
@@ -96,11 +87,6 @@ public class CreateSequenceCompiler {
         }
 
         @Override
-        public Integer getByteSize() {
-            return PDataType.INTEGER.getByteSize();
-        }
-
-        @Override
         public Integer getMaxLength() {
             return null;
         }
@@ -111,8 +97,8 @@ public class CreateSequenceCompiler {
         }
 
         @Override
-        public ColumnModifier getColumnModifier() {
-            return null;
+        public SortOrder getSortOrder() {
+            return SortOrder.getDefault();
         }
         
     }
@@ -140,9 +126,8 @@ public class CreateSequenceCompiler {
         }
         
         final PhoenixConnection connection = statement.getConnection();
-        final ColumnResolver resolver = FromCompiler.EMPTY_TABLE_RESOLVER;
         
-        final StatementContext context = new StatementContext(statement, resolver, statement.getParameters(), new Scan());
+        final StatementContext context = new StatementContext(statement);
         if (startsWithNode instanceof BindParseNode) {
             context.getBindManager().addParamMetaData((BindParseNode)startsWithNode, LONG_DATUM);
         }
@@ -172,17 +157,17 @@ public class CreateSequenceCompiler {
         }
         final long incrementBy = (Long)PDataType.LONG.toObject(ptr, incrementByExpr.getDataType());
         
-        int cacheSizeValue = connection.getQueryServices().getProps().getInt(QueryServices.SEQUENCE_CACHE_SIZE_ATTRIB,QueryServicesOptions.DEFAULT_SEQUENCE_CACHE_SIZE);
+        long cacheSizeValue = connection.getQueryServices().getProps().getLong(QueryServices.SEQUENCE_CACHE_SIZE_ATTRIB,QueryServicesOptions.DEFAULT_SEQUENCE_CACHE_SIZE);
         if (cacheNode != null) {
             Expression cacheSizeExpr = cacheNode.accept(expressionCompiler);
             cacheSizeExpr.evaluate(null, ptr);
-            if (ptr.getLength() != 0 && (!cacheSizeExpr.getDataType().isCoercibleTo(PDataType.INTEGER) || (cacheSizeValue = (Integer)PDataType.INTEGER.toObject(ptr)) < 0)) {
+            if (ptr.getLength() != 0 && (!cacheSizeExpr.getDataType().isCoercibleTo(PDataType.LONG) || (cacheSizeValue = (Long)PDataType.LONG.toObject(ptr, cacheSizeExpr.getDataType())) < 0)) {
                 throw new SQLExceptionInfo.Builder(SQLExceptionCode.CACHE_MUST_BE_NON_NEGATIVE_CONSTANT)
                 .setSchemaName(sequence.getSequenceName().getSchemaName())
                 .setTableName(sequence.getSequenceName().getTableName()).build().buildException();
             }
         }
-        final int cacheSize = Math.max(1, cacheSizeValue);
+        final long cacheSize = Math.max(1L, cacheSizeValue);
         
 
         final MetaDataClient client = new MetaDataClient(connection);        
@@ -208,6 +193,10 @@ public class CreateSequenceCompiler {
                 return context.getBindManager().getParameterMetaData();
             }
 
+            @Override
+            public StatementContext getContext() {
+                return context;
+            }
         };
     }
 }

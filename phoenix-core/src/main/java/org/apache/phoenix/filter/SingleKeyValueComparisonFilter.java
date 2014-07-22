@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,11 +20,12 @@ package org.apache.phoenix.filter;
 import java.io.DataInput;
 import java.io.IOException;
 
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.KeyValueUtil;
 import org.apache.hadoop.hbase.util.Bytes;
-
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.KeyValueColumnExpression;
+import org.apache.phoenix.expression.visitor.TraverseAllExpressionVisitor;
 import org.apache.phoenix.schema.tuple.SingleKeyValueTuple;
 
 
@@ -57,7 +56,7 @@ public abstract class SingleKeyValueComparisonFilter extends BooleanExpressionFi
     protected abstract int compare(byte[] cfBuf, int cfOffset, int cfLength, byte[] cqBuf, int cqOffset, int cqLength);
 
     private void init() {
-        EvaluateOnCompletionVisitor visitor = new EvaluateOnCompletionVisitor() {
+        TraverseAllExpressionVisitor<Void> visitor = new TraverseAllExpressionVisitor<Void>() {
             @Override
             public Void visit(KeyValueColumnExpression expression) {
                 cf = expression.getColumnFamily();
@@ -66,7 +65,6 @@ public abstract class SingleKeyValueComparisonFilter extends BooleanExpressionFi
             }
         };
         expression.accept(visitor);
-        this.evaluateOnCompletion = visitor.evaluateOnCompletion();
     }
 
     private boolean foundColumn() {
@@ -74,7 +72,7 @@ public abstract class SingleKeyValueComparisonFilter extends BooleanExpressionFi
     }
 
     @Override
-    public ReturnCode filterKeyValue(KeyValue keyValue) {
+    public ReturnCode filterKeyValue(Cell keyValue) {
         if (this.matchedColumn) {
           // We already found and matched the single column, all keys now pass
           // TODO: why won't this cause earlier versions of a kv to be included?
@@ -84,16 +82,16 @@ public abstract class SingleKeyValueComparisonFilter extends BooleanExpressionFi
           // We found all the columns, but did not match the expression, so skip to next row
           return ReturnCode.NEXT_ROW;
         }
-        byte[] buf = keyValue.getBuffer();
+        byte[] buf = keyValue.getValueArray();
         if (compare(buf, keyValue.getFamilyOffset(), keyValue.getFamilyLength(), buf, keyValue.getQualifierOffset(), keyValue.getQualifierLength()) != 0) {
             // Remember the key in case this is the only key value we see.
             // We'll need it if we have row key columns too.
-            inputTuple.setKey(keyValue);
+            inputTuple.setKey(KeyValueUtil.ensureKeyValue(keyValue));
             // This is a key value we're not interested in
             // TODO: use NEXT_COL when bug fix comes through that includes the row still
             return ReturnCode.INCLUDE;
         }
-        inputTuple.setKeyValue(keyValue);
+        inputTuple.setKeyValue(KeyValueUtil.ensureKeyValue(keyValue));
 
         // We have the columns, so evaluate here
         if (!Boolean.TRUE.equals(evaluate(inputTuple))) {
@@ -117,7 +115,7 @@ public abstract class SingleKeyValueComparisonFilter extends BooleanExpressionFi
         // to guard against this by checking whether or not we've filtered in
         // the key value (i.e. filterKeyValue was called and we found the keyValue
         // for which we're looking).
-        if (inputTuple.hasKey() && evaluateOnCompletion()) {
+        if (inputTuple.hasKey() && expression.requiresFinalEvaluation()) {
             return !Boolean.TRUE.equals(evaluate(inputTuple));
         }
         // Finally, if we have no values, and we're not required to re-evaluate it

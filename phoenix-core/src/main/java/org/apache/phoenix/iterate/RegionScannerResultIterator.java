@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,10 +22,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.regionserver.MultiVersionConsistencyControl;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
-
 import org.apache.phoenix.schema.tuple.MultiKeyValueTuple;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ServerUtil;
@@ -38,18 +34,17 @@ public class RegionScannerResultIterator extends BaseResultIterator {
     
     public RegionScannerResultIterator(RegionScanner scanner) {
         this.scanner = scanner;
-        MultiVersionConsistencyControl.setThreadReadPoint(scanner.getMvccReadPoint());
     }
     
     @Override
     public Tuple next() throws SQLException {
         try {
             // TODO: size
-            List<KeyValue> results = new ArrayList<KeyValue>();
+            List<Cell> results = new ArrayList<Cell>();
             // Results are potentially returned even when the return value of s.next is false
             // since this is an indication of whether or not there are more values after the
             // ones returned
-            boolean hasMore = scanner.nextRaw(results, null);
+            boolean hasMore = scanner.nextRaw(results);
             if (!hasMore && results.isEmpty()) {
                 return null;
             }

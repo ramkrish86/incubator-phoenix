@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,11 +22,9 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 import org.apache.hadoop.io.WritableUtils;
-
-import com.google.common.base.Objects;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PDatum;
+import org.apache.phoenix.schema.SortOrder;
 
 /**
  * 
@@ -39,22 +35,20 @@ import org.apache.phoenix.schema.PDatum;
  */
 abstract public class ColumnExpression extends BaseTerminalExpression {
     protected PDataType type;
-    private Integer byteSize;
     private boolean isNullable;
     private Integer maxLength;
     private Integer scale;
-    private ColumnModifier columnModifier;
+    private SortOrder sortOrder;
 
     public ColumnExpression() {
     }
 
+    // TODO: review, as the hashCode() and equals() here seem unnecessary
     @Override
     public int hashCode() {
         final int prime = 31;
         int result = 1;
         result = prime * result + (isNullable() ? 1231 : 1237);
-        Integer maxLength = this.getByteSize();
-        result = prime * result + ((maxLength == null) ? 0 : maxLength.hashCode());
         PDataType type = this.getDataType();
         result = prime * result + ((type == null) ? 0 : type.hashCode());
         return result;
@@ -67,7 +61,6 @@ abstract public class ColumnExpression extends BaseTerminalExpression {
         if (getClass() != obj.getClass()) return false;
         ColumnExpression other = (ColumnExpression)obj;
         if (this.isNullable() != other.isNullable()) return false;
-        if (!Objects.equal(this.getByteSize(),other.getByteSize())) return false;
         if (this.getDataType() != other.getDataType()) return false;
         return true;
     }
@@ -75,12 +68,9 @@ abstract public class ColumnExpression extends BaseTerminalExpression {
     public ColumnExpression(PDatum datum) {
         this.type = datum.getDataType();
         this.isNullable = datum.isNullable();
-        if (type.isFixedWidth() && type.getByteSize() == null) {
-            this.byteSize = datum.getByteSize();
-        }
         this.maxLength = datum.getMaxLength();
         this.scale = datum.getScale();
-        this.columnModifier = datum.getColumnModifier();
+        this.sortOrder = datum.getSortOrder();
     }
 
     @Override
@@ -94,16 +84,8 @@ abstract public class ColumnExpression extends BaseTerminalExpression {
     }
     
     @Override
-    public ColumnModifier getColumnModifier() {
-    	return columnModifier;
-    }
-
-    @Override
-    public Integer getByteSize() {
-        if (byteSize != null) {
-            return byteSize;
-        }
-        return super.getByteSize();
+    public SortOrder getSortOrder() {
+    	return sortOrder;
     }
 
     @Override
@@ -128,10 +110,7 @@ abstract public class ColumnExpression extends BaseTerminalExpression {
             maxLength = WritableUtils.readVInt(input);
         }
         type = PDataType.values()[typeAndFlag >>> 3];
-        if (type.isFixedWidth() && type.getByteSize() == null) {
-            byteSize = WritableUtils.readVInt(input);
-        }
-        columnModifier = ColumnModifier.fromSystemValue(WritableUtils.readVInt(input));
+        sortOrder = SortOrder.fromSystemValue(WritableUtils.readVInt(input));
     }
 
     @Override
@@ -146,9 +125,6 @@ abstract public class ColumnExpression extends BaseTerminalExpression {
         if (maxLength != null) {
             WritableUtils.writeVInt(output, maxLength);
         }
-        if (type.isFixedWidth() && type.getByteSize() == null) {
-            WritableUtils.writeVInt(output, byteSize);
-        }
-        WritableUtils.writeVInt(output, ColumnModifier.toSystemValue(columnModifier));
+        WritableUtils.writeVInt(output, sortOrder.getSystemValue());
     }
 }

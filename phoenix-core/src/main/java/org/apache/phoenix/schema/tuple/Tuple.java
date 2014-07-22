@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +17,7 @@
  */
 package org.apache.phoenix.schema.tuple;
 
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 
 /**
@@ -58,9 +56,9 @@ public interface Tuple {
      * @return the KeyValue at the given index
      * @throws IndexOutOfBoundsException if an invalid index is used
      */
-    public KeyValue getValue(int index);
+    public Cell getValue(int index);
     
-    /***
+    /**
      * Get the KeyValue contained by the Tuple with the given family and
      * qualifier name.
      * @param family the column family of the KeyValue being retrieved
@@ -68,9 +66,9 @@ public interface Tuple {
      * @return the KeyValue with the given family and qualifier name or
      * null if not found.
      */
-    public KeyValue getValue(byte [] family, byte [] qualifier);
+    public Cell getValue(byte [] family, byte [] qualifier);
     
-    /***
+    /**
      * Get the value byte array of the KeyValue contained by the Tuple with 
      * the given family and qualifier name.
      * @param family the column family of the KeyValue being retrieved
@@ -81,4 +79,12 @@ public interface Tuple {
      * exists; otherwise false.
      */
     public boolean getValue(byte [] family, byte [] qualifier, ImmutableBytesWritable ptr);
+    
+    /**
+     * Get the sequence value given the sequence index. May only be evaluated
+     * on the client-side.
+     * @param index
+     * @return the current or next sequence value
+     */
+    public long getSequenceValue(int index);
 }

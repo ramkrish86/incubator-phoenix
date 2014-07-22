@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,7 +22,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
 import org.apache.phoenix.parse.FunctionParseNode.Argument;
@@ -55,7 +52,7 @@ public class RegexpSubstrFunction extends PrefixFunction {
 
     private Pattern pattern;
     private boolean isOffsetConstant;
-    private Integer byteSize;
+    private Integer maxLength;
 
     public RegexpSubstrFunction() { }
 
@@ -77,11 +74,13 @@ public class RegexpSubstrFunction extends PrefixFunction {
         Number offsetNumber = (Number)((LiteralExpression)getOffsetExpression()).getValue();
         if (offsetNumber != null) {
             int offset = offsetNumber.intValue();
-            if (getSourceStrExpression().getDataType().isFixedWidth()) {
+            PDataType type = getSourceStrExpression().getDataType();
+            if (type.isFixedWidth()) {
                 if (offset >= 0) {
-                    byteSize = getSourceStrExpression().getByteSize() - offset - (offset == 0 ? 0 : 1);
+                    Integer maxLength = getSourceStrExpression().getMaxLength();
+                    this.maxLength = maxLength - offset - (offset == 0 ? 0 : 1);
                 } else {
-                    byteSize = -offset;
+                    this.maxLength = -offset;
                 }
             }
         }
@@ -95,7 +94,7 @@ public class RegexpSubstrFunction extends PrefixFunction {
         if (!getSourceStrExpression().evaluate(tuple, ptr)) {
             return false;
         }
-        String sourceStr = (String)PDataType.VARCHAR.toObject(ptr, getSourceStrExpression().getColumnModifier());
+        String sourceStr = (String)PDataType.VARCHAR.toObject(ptr, getSourceStrExpression().getSortOrder());
         if (sourceStr == null) {
             return false;
         }
@@ -104,7 +103,7 @@ public class RegexpSubstrFunction extends PrefixFunction {
         if (!offsetExpression.evaluate(tuple, ptr)) {
             return false;
         }
-        int offset = offsetExpression.getDataType().getCodec().decodeInt(ptr, offsetExpression.getColumnModifier());
+        int offset = offsetExpression.getDataType().getCodec().decodeInt(ptr, offsetExpression.getSortOrder());
 
         int strlen = sourceStr.length();
         // Account for 1 versus 0-based offset
@@ -128,8 +127,8 @@ public class RegexpSubstrFunction extends PrefixFunction {
     }
 
     @Override
-    public Integer getByteSize() {
-        return byteSize;
+    public Integer getMaxLength() {
+        return maxLength;
     }
 
     @Override

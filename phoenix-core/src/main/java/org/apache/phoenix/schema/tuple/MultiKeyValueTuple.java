@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,31 +19,32 @@ package org.apache.phoenix.schema.tuple;
 
 import java.util.List;
 
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
-import com.google.common.collect.ImmutableList;
+import org.apache.phoenix.hbase.index.util.GenericKeyValueBuilder;
 import org.apache.phoenix.util.KeyValueUtil;
 
+import com.google.common.collect.ImmutableList;
 
-public class MultiKeyValueTuple implements Tuple {
-    private List<KeyValue> values;
+
+public class MultiKeyValueTuple extends BaseTuple {
+    private List<Cell> values;
     
-    public MultiKeyValueTuple(List<KeyValue> values) {
+    public MultiKeyValueTuple(List<Cell> values) {
         setKeyValues(values);
     }
     
     public MultiKeyValueTuple() {
     }
 
-    public void setKeyValues(List<KeyValue> values) {
+    public void setKeyValues(List<Cell> values) {
         this.values = ImmutableList.copyOf(values);
     }
     
     @Override
     public void getKey(ImmutableBytesWritable ptr) {
-        KeyValue value = values.get(0);
-        ptr.set(value.getBuffer(), value.getRowOffset(), value.getRowLength());
+        Cell value = values.get(0);
+        ptr.set(value.getRowArray(), value.getRowOffset(), value.getRowLength());
     }
 
     @Override
@@ -54,8 +53,8 @@ public class MultiKeyValueTuple implements Tuple {
     }
 
     @Override
-    public KeyValue getValue(byte[] family, byte[] qualifier) {
-        return KeyValueUtil.getColumnLatest(values, family, qualifier);
+    public Cell getValue(byte[] family, byte[] qualifier) {
+        return KeyValueUtil.getColumnLatest(GenericKeyValueBuilder.INSTANCE, values, family, qualifier);
     }
 
     @Override
@@ -69,17 +68,17 @@ public class MultiKeyValueTuple implements Tuple {
     }
 
     @Override
-    public KeyValue getValue(int index) {
+    public Cell getValue(int index) {
         return values.get(index);
     }
 
     @Override
     public boolean getValue(byte[] family, byte[] qualifier,
             ImmutableBytesWritable ptr) {
-        KeyValue kv = getValue(family, qualifier);
+        Cell kv = getValue(family, qualifier);
         if (kv == null)
             return false;
-        ptr.set(kv.getBuffer(), kv.getValueOffset(), kv.getValueLength());
+        ptr.set(kv.getValueArray(), kv.getValueOffset(), kv.getValueLength());
         return true;
     }
 }

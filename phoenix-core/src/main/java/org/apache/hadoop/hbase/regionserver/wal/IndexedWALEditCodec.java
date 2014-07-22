@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.hadoop.hbase.regionserver.wal;
 
 import java.io.DataInput;
@@ -7,14 +25,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.KeyValueUtil;
 import org.apache.hadoop.hbase.codec.BaseDecoder;
 import org.apache.hadoop.hbase.codec.BaseEncoder;
-import org.apache.hadoop.hbase.codec.Decoder;
-import org.apache.hadoop.hbase.codec.Encoder;
-
-import org.apache.hadoop.hbase.index.wal.IndexedKeyValue;
-import org.apache.hadoop.hbase.index.wal.KeyValueCodec;
+import org.apache.phoenix.hbase.index.wal.IndexedKeyValue;
+import org.apache.phoenix.hbase.index.wal.KeyValueCodec;
 
 
 /**
@@ -24,25 +42,16 @@ import org.apache.hadoop.hbase.index.wal.KeyValueCodec;
  * not be installed on a running cluster, but rather one that has been cleanly shutdown and requires
  * no WAL replay on startup.
  */
-public class IndexedWALEditCodec extends WALEditCodec {
+public class IndexedWALEditCodec extends WALCellCodec {
 
   // can't have negative values because reading off a stream returns a negative if its the end of
   // the stream
   private static final int REGULAR_KEY_VALUE_MARKER = 0;
   private CompressionContext compression;
 
-  /** Required nullary constructor */
-  public IndexedWALEditCodec() {
-  }
-
-  /**
-   * Override the parent implementation so we can get access to the current context too
-   * @param compression compression to support for the encoder/decoder
-   */
-  @Override
-  public void setCompression(CompressionContext compression) {
-    super.setCompression(compression);
-    this.compression = compression;
+  public IndexedWALEditCodec(Configuration conf, CompressionContext compression) {
+      super(conf, compression);
+      this.compression = compression;
   }
 
   @Override
@@ -71,12 +80,12 @@ public class IndexedWALEditCodec extends WALEditCodec {
   }
 
   /**
-   * Custom {@link Decoder} that can handle a stream of regular and indexed {@link KeyValue}s.
+   * Custom Decoder that can handle a stream of regular and indexed {@link KeyValue}s.
    */
   public class IndexKeyValueDecoder extends BaseDecoder {
 
     /**
-     * Create a {@link Decoder} on the given input stream with the given {@link Decoder} to parse
+     * Create a Decoder on the given input stream with the given Decoder to parse
      * generic {@link KeyValue}s.
      * @param is stream to read from
      */
@@ -95,7 +104,7 @@ public class IndexedWALEditCodec extends WALEditCodec {
     private Decoder decoder;
 
     /**
-     * Create a {@link Decoder} on the given input stream with the given {@link Decoder} to parse
+     * Create a Decoder on the given input stream with the given Decoder to parse
      * generic {@link KeyValue}s.
      * @param is stream to read from
      * @param compressedDecoder decoder for generic {@link KeyValue}s. Should support the expected
@@ -107,7 +116,7 @@ public class IndexedWALEditCodec extends WALEditCodec {
     }
 
     @Override
-    protected KeyValue parseCell() throws IOException {
+    protected Cell parseCell() throws IOException {
       // reader the marker
       int marker = this.in.read();
       if (marker < 0) {
@@ -143,12 +152,12 @@ public class IndexedWALEditCodec extends WALEditCodec {
     }
 
     @Override
-    public void write(KeyValue cell) throws IOException {
+    public void write(Cell cell) throws IOException {
       // make sure we are open
       checkFlushed();
 
       // use the standard encoding mechanism
-      KeyValueCodec.write((DataOutput) this.out, cell);
+      KeyValueCodec.write((DataOutput) this.out, KeyValueUtil.ensureKeyValue(cell));
     }
   }
 
@@ -172,7 +181,7 @@ public class IndexedWALEditCodec extends WALEditCodec {
     }
 
     @Override
-    public void write(KeyValue cell) throws IOException {
+    public void write(Cell cell) throws IOException {
       //make sure we are open
       checkFlushed();
       
@@ -188,7 +197,7 @@ public class IndexedWALEditCodec extends WALEditCodec {
         this.compressedKvEncoder.write(cell);
       }
       else{
-        KeyValueCodec.write((DataOutput) out, cell);
+        KeyValueCodec.write((DataOutput) out, KeyValueUtil.ensureKeyValue(cell));
       }
     }
   }

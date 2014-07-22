@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,15 +23,14 @@ import java.util.List;
 
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.compile.KeyPart;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.parse.FunctionParseNode.Argument;
 import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
 import org.apache.phoenix.query.KeyRange;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.ByteUtil;
 import org.apache.phoenix.util.StringUtil;
@@ -52,15 +49,10 @@ import org.apache.phoenix.util.StringUtil;
 public class RTrimFunction extends ScalarFunction {
     public static final String NAME = "RTRIM";
 
-    private Integer byteSize;
-
     public RTrimFunction() { }
 
     public RTrimFunction(List<Expression> children) throws SQLException {
         super(children);
-        if (getStringExpression().getDataType().isFixedWidth()) {
-            byteSize = getStringExpression().getByteSize();
-        }
     }
 
     private Expression getStringExpression() {
@@ -68,8 +60,8 @@ public class RTrimFunction extends ScalarFunction {
     }
 
     @Override
-    public ColumnModifier getColumnModifier() {
-        return children.get(0).getColumnModifier();
+    public SortOrder getSortOrder() {
+        return children.get(0).getSortOrder();
     }    
 
     @Override
@@ -87,8 +79,8 @@ public class RTrimFunction extends ScalarFunction {
         int offset = ptr.getOffset();
         int length = ptr.getLength();
         
-        ColumnModifier columnModifier = getStringExpression().getColumnModifier();
-        int i = StringUtil.getFirstNonBlankCharIdxFromEnd(string, offset, length, columnModifier);
+        SortOrder sortOrder = getStringExpression().getSortOrder();
+        int i = StringUtil.getFirstNonBlankCharIdxFromEnd(string, offset, length, sortOrder);
         if (i == offset - 1) {
             ptr.set(ByteUtil.EMPTY_BYTE_ARRAY);
             return true;
@@ -128,8 +120,8 @@ public class RTrimFunction extends ScalarFunction {
                     range = childPart.getKeyRange(op, rhs);
                     break;
                 }
-                Integer length = getColumn().getByteSize();
-                return length == null ? range : range.fill(length);
+                Integer length = getColumn().getMaxLength();
+                return length == null || !type.isFixedWidth() ? range : range.fill(length);
             }
 
             @Override
@@ -145,8 +137,8 @@ public class RTrimFunction extends ScalarFunction {
     }
 
     @Override
-    public Integer getByteSize() {
-        return byteSize;
+    public Integer getMaxLength() {
+        return getStringExpression().getMaxLength();
     }
 
     @Override

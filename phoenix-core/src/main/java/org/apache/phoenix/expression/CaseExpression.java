@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,7 +26,6 @@ import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.io.WritableUtils;
-
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.expression.visitor.ExpressionVisitor;
@@ -127,6 +124,12 @@ public class CaseExpression extends BaseCompoundExpression {
         return returnType;
     }
 
+//    @Override TODO: do we need this?
+//    public Integer getMaxLength() {
+//        return children.get(0).getMaxLength();
+//    }
+
+    
     @Override
     public void reset() {
         foundIndex = false;
@@ -231,4 +234,8 @@ public class CaseExpression extends BaseCompoundExpression {
         return buf.toString();
     }
     
+    @Override
+    public boolean requiresFinalEvaluation() {
+        return super.requiresFinalEvaluation() || this.hasElse();
+    }
 }

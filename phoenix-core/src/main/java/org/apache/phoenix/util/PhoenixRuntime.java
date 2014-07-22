@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,13 +24,21 @@ import java.io.Reader;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
-import java.util.StringTokenizer;
+import java.util.Set;
+import java.util.TreeSet;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
+import org.apache.commons.cli.PosixParser;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
@@ -41,13 +47,19 @@ import org.apache.phoenix.coprocessor.MetaDataProtocol.MetaDataMutationResult;
 import org.apache.phoenix.coprocessor.MetaDataProtocol.MutationCode;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.schema.AmbiguousColumnException;
+import org.apache.phoenix.schema.ColumnNotFoundException;
 import org.apache.phoenix.schema.MetaDataClient;
 import org.apache.phoenix.schema.PColumn;
+import org.apache.phoenix.schema.PColumnFamily;
 import org.apache.phoenix.schema.PDataType;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.schema.RowKeySchema;
 import org.apache.phoenix.schema.TableNotFoundException;
 
+import com.google.common.base.Splitter;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
 /**
@@ -101,34 +113,10 @@ public class PhoenixRuntime {
      */
     public final static String CONNECTIONLESS = "none";
     
-    private static final String TABLE_OPTION = "-t";
-    private static final String HEADER_OPTION = "-h";
-    private static final String STRICT_OPTION = "-s";
-    private static final String CSV_OPTION = "-d";
     private static final String HEADER_IN_LINE = "in-line";
     private static final String SQL_FILE_EXT = ".sql";
     private static final String CSV_FILE_EXT = ".csv";
-    
-    private static void usageError() {
-        System.err.println("Usage: psql [-t table-name] [-h comma-separated-column-names | in-line] [-d field-delimiter-char quote-char escape-char]<zookeeper>  <path-to-sql-or-csv-file>...\n" +
-                "  By default, the name of the CSV file is used to determine the Phoenix table into which the CSV data is loaded\n" +
-                "  and the ordinal value of the columns determines the mapping.\n" +
-                "  -t overrides the table into which the CSV data is loaded\n" +
-                "  -h overrides the column names to which the CSV data maps\n" +
-                "     A special value of in-line indicating that the first line of the CSV file\n" +
-                "     determines the column to which the data maps.\n" +
-                "  -s uses strict mode by throwing an exception if a column name doesn't match during CSV loading.\n" +
-                "  -d uses custom delimiters for CSV loader, need to specify single char for field delimiter, phrase delimiter, and escape char.\n" +
-                "     number is NOT usually a delimiter and shall be taken as 1 -> ctrl A, 2 -> ctrl B ... 9 -> ctrl I. \n" +
-                "Examples:\n" +
-                "  psql localhost my_ddl.sql\n" +
-                "  psql localhost my_ddl.sql my_table.csv\n" +
-                "  psql -t my_table my_cluster:1825 my_table2012-Q3.csv\n" +
-                "  psql -t my_table -h col1,col2,col3 my_cluster:1825 my_table2012-Q3.csv\n" +
-                "  psql -t my_table -h col1,col2,col3 -d 1 2 3 my_cluster:1825 my_table2012-Q3.csv\n"
-        );
-        System.exit(-1);
-    }
+
     /**
      * Provides a mechanism to run SQL scripts against, where the arguments are:
      * 1) connection URL string
@@ -138,86 +126,40 @@ public class PhoenixRuntime {
      * increment timestamp value.
      */
     public static void main(String [] args) {
-        if (args.length < 2) {
-            usageError();
-        }
+
+        ExecutionCommand execCmd = ExecutionCommand.parseArgs(args);
+        String jdbcUrl = JDBC_PROTOCOL + JDBC_PROTOCOL_SEPARATOR + execCmd.getConnectionString();
+
         PhoenixConnection conn = null;
         try {
-            String tableName = null;
-            List<String> columns = null;
-            boolean isStrict = false;
-            List<String> delimiter = new ArrayList<String>();
-
-            int i = 0;
-            for (; i < args.length; i++) {
-                if (TABLE_OPTION.equals(args[i])) {
-                    if (++i == args.length || tableName != null) {
-                        usageError();
-                    }
-                    tableName = args[i];
-                } else if (HEADER_OPTION.equals(args[i])) {
-                    if (++i >= args.length || columns != null) {
-                        usageError();
-                    }
-                    String header = args[i];
-                    if (HEADER_IN_LINE.equals(header)) {
-                        columns = Collections.emptyList();
-                    } else {
-                        columns = Lists.newArrayList();
-                        StringTokenizer tokenizer = new StringTokenizer(header,",");
-                        while(tokenizer.hasMoreTokens()) {
-                            columns.add(tokenizer.nextToken());
-                        }
-                    }
-                } else if (STRICT_OPTION.equals(args[i])) {
-                    isStrict = true;
-                } else if (CSV_OPTION.equals(args[i])) {
-                    for(int j=0; j < 3; j++) {
-                        if(args[++i].length()==1){
-                            delimiter.add(args[i]);
-                        } else {
-                            usageError();
-                        }
-                    }
-                } else {
-                    break;
-                }
-            }
-            if (i == args.length) {
-                usageError();
-            }
-            
             Properties props = new Properties();
-            String connectionUrl = JDBC_PROTOCOL + JDBC_PROTOCOL_SEPARATOR + args[i++];
-            conn = DriverManager.getConnection(connectionUrl, props).unwrap(PhoenixConnection.class);
-            
-            for (; i < args.length; i++) {
-                String fileName = args[i];
-                if (fileName.endsWith(SQL_FILE_EXT)) {
-               		PhoenixRuntime.executeStatements(conn, new FileReader(args[i]), Collections.emptyList());
-                } else if (fileName.endsWith(CSV_FILE_EXT)) {
+            conn = DriverManager.getConnection(jdbcUrl, props)
+                    .unwrap(PhoenixConnection.class);
+
+            for (String inputFile : execCmd.getInputFiles()) {
+                if (inputFile.endsWith(SQL_FILE_EXT)) {
+                    PhoenixRuntime.executeStatements(conn,
+                            new FileReader(inputFile), Collections.emptyList());
+                } else if (inputFile.endsWith(CSV_FILE_EXT)) {
+
+                    String tableName = execCmd.getTableName();
                     if (tableName == null) {
-                        tableName = fileName.substring(fileName.lastIndexOf(File.separatorChar) + 1, fileName.length()-CSV_FILE_EXT.length());
+                        tableName = SchemaUtil.normalizeIdentifier(
+                                inputFile.substring(inputFile.lastIndexOf(File.separatorChar) + 1,
+                                        inputFile.length() - CSV_FILE_EXT.length()));
                     }
-                    CSVLoader csvLoader = new CSVLoader(conn, tableName, columns, isStrict, delimiter);
-                    csvLoader.upsert(fileName);
-                } else {
-                    usageError();
-                }
-                Long scn = conn.getSCN();
-                // If specifying SCN, increment it between processing files to allow
-                // for later files to see earlier files tables.
-                if (scn != null) {
-                    scn++;
-                    props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, scn.toString());
-                    conn.close();
-                    conn = DriverManager.getConnection(connectionUrl, props).unwrap(PhoenixConnection.class);
+                    CSVCommonsLoader csvLoader =
+                            new CSVCommonsLoader(conn, tableName, execCmd.getColumns(),
+                                    execCmd.isStrict(), execCmd.getFieldDelimiter(),
+                                    execCmd.getQuoteCharacter(), execCmd.getEscapeCharacter(),
+                                    execCmd.getArrayElementSeparator());
+                    csvLoader.upsert(inputFile);
                 }
             }
         } catch (Throwable t) {
             t.printStackTrace();
         } finally {
-            if(conn != null) {
+            if (conn != null) {
                 try {
                     conn.close();
                 } catch (SQLException e) {
@@ -227,6 +169,8 @@ public class PhoenixRuntime {
             System.exit(0);
         }
     }
+
+    public static final String PHOENIX_TEST_DRIVER_URL_PARAM = "test=true";
 
     private PhoenixRuntime() {
     }
@@ -285,7 +229,8 @@ public class PhoenixRuntime {
      * @throws SQLException 
      */
     public static Iterator<Pair<byte[],List<KeyValue>>> getUncommittedDataIterator(Connection conn, boolean includeMutableIndexes) throws SQLException {
-        final Iterator<Pair<byte[],List<Mutation>>> iterator = conn.unwrap(PhoenixConnection.class).getMutationState().toMutations(includeMutableIndexes);
+        final PhoenixConnection pconn = conn.unwrap(PhoenixConnection.class);
+        final Iterator<Pair<byte[],List<Mutation>>> iterator = pconn.getMutationState().toMutations(includeMutableIndexes);
         return new Iterator<Pair<byte[],List<KeyValue>>>() {
 
             @Override
@@ -298,13 +243,13 @@ public class PhoenixRuntime {
                 Pair<byte[],List<Mutation>> pair = iterator.next();
                 List<KeyValue> keyValues = Lists.newArrayListWithExpectedSize(pair.getSecond().size() * 5); // Guess-timate 5 key values per row
                 for (Mutation mutation : pair.getSecond()) {
-                    for (List<KeyValue> keyValueList : mutation.getFamilyMap().values()) {
-                        for (KeyValue keyValue : keyValueList) {
-                            keyValues.add(keyValue);
+                    for (List<Cell> keyValueList : mutation.getFamilyCellMap().values()) {
+                        for (Cell keyValue : keyValueList) {
+                            keyValues.add(org.apache.hadoop.hbase.KeyValueUtil.ensureKeyValue(keyValue));
                         }
                     }
                 }
-                Collections.sort(keyValues, KeyValue.COMPARATOR);
+                Collections.sort(keyValues, pconn.getKeyValueBuilder().getKeyValueComparator());
                 return new Pair<byte[], List<KeyValue>>(pair.getFirst(),keyValues);
             }
 
@@ -316,11 +261,11 @@ public class PhoenixRuntime {
         };
     }
     
-    private static PTable getTable(Connection conn, String name) throws SQLException {
+    public static PTable getTable(Connection conn, String name) throws SQLException {
         PTable table = null;
         PhoenixConnection pconn = conn.unwrap(PhoenixConnection.class);
         try {
-            table = pconn.getPMetaData().getTable(name);
+            table = pconn.getMetaDataCache().getTable(new PTableKey(pconn.getTenantId(), name));
         } catch (TableNotFoundException e) {
             String schemaName = SchemaUtil.getSchemaNameFromFullName(name);
             String tableName = SchemaUtil.getTableNameFromFullName(name);
@@ -331,6 +276,112 @@ public class PhoenixRuntime {
             table = result.getTable();
         }
         return table;
+    }
+    
+    /**
+     * Get list of ColumnInfos that contain Column Name and its associated
+     * PDataType for an import. The supplied list of columns can be null -- if it is non-null,
+     * it represents a user-supplied list of columns to be imported.
+     *
+     * @param conn Phoenix connection from which metadata will be read
+     * @param tableName Phoenix table name whose columns are to be checked. Can include a schema
+     *                  name
+     * @param columns user-supplied list of import columns, can be null
+     */
+    public static List<ColumnInfo> generateColumnInfo(Connection conn,
+            String tableName, List<String> columns)
+            throws SQLException {
+
+        PTable table = PhoenixRuntime.getTable(conn, tableName);
+        List<ColumnInfo> columnInfoList = Lists.newArrayList();
+        Set<String> unresolvedColumnNames = new TreeSet<String>();
+        if (columns == null) {
+            // use all columns in the table
+            for(PColumn pColumn : table.getColumns()) {
+               int sqlType = pColumn.getDataType().getResultSetSqlType();        
+               columnInfoList.add(new ColumnInfo(pColumn.toString(), sqlType));
+            }
+        } else {
+            // Leave "null" as indication to skip b/c it doesn't exist
+            for (int i = 0; i < columns.size(); i++) {
+                String columnName = columns.get(i);
+                try {
+                    ColumnInfo columnInfo = PhoenixRuntime.getColumnInfo(table, columnName);
+                    columnInfoList.add(columnInfo);
+                } catch (ColumnNotFoundException cnfe) {
+                    unresolvedColumnNames.add(columnName.trim());
+                } catch (AmbiguousColumnException ace) {
+                    unresolvedColumnNames.add(columnName.trim());
+                }
+            }
+        }
+        // if there exists columns that cannot be resolved, error out.
+        if (unresolvedColumnNames.size()>0) {
+                StringBuilder exceptionMessage = new StringBuilder();
+                boolean first = true;
+                exceptionMessage.append("Unable to resolve these column names:\n");
+                for (String col : unresolvedColumnNames) {
+                    if (first) first = false;
+                    else exceptionMessage.append(",");
+                    exceptionMessage.append(col);
+                }
+                exceptionMessage.append("\nAvailable columns with column families:\n");
+                first = true;
+                for (PColumn pColumn : table.getColumns()) {
+                    if (first) first = false;
+                    else exceptionMessage.append(",");
+                    exceptionMessage.append(pColumn.toString());
+                }
+                throw new SQLException(exceptionMessage.toString()); 
+      }
+       return columnInfoList;
+    }
+
+    /**
+     * Returns the column info for the given column for the given table.
+     * 
+     * @param table
+     * @param columnName User-specified column name. May be family-qualified or bare.
+     * @return columnInfo associated with the column in the table
+     * @throws SQLException if parameters are null or if column is not found or if column is ambiguous.
+     */
+    public static ColumnInfo getColumnInfo(PTable table, String columnName) throws SQLException {
+        if (table==null) {
+            throw new SQLException("Table must not be null.");
+        }
+        if (columnName==null) {
+            throw new SQLException("columnName must not be null.");
+        }
+        columnName = columnName.trim().toUpperCase(); 
+        PColumn pColumn = null;
+        if (columnName.contains(QueryConstants.NAME_SEPARATOR)) {
+            String[] tokens = columnName.split(QueryConstants.NAME_SEPARATOR_REGEX);
+            if (tokens.length!=2) {
+                throw new SQLException(String.format("Unable to process column %s, expected family-qualified name.",columnName));
+            }
+            String familyName = tokens[0];
+            String familyColumn = tokens[1];
+            PColumnFamily family = table.getColumnFamily(familyName);
+            pColumn = family.getColumn(familyColumn);
+        } else {
+            pColumn = table.getColumn(columnName);
+        }
+        return getColumnInfo(pColumn);
+    }
+    
+    /**
+     * Constructs a column info for the supplied pColumn
+     * @param pColumn
+     * @return columnInfo
+     * @throws SQLException if the parameter is null.
+     */
+    public static ColumnInfo getColumnInfo(PColumn pColumn) throws SQLException {
+        if (pColumn==null) {
+            throw new SQLException("pColumn must not be null.");
+        }
+        int sqlType = pColumn.getDataType().getResultSetSqlType();
+        ColumnInfo columnInfo = new ColumnInfo(pColumn.toString(),sqlType);
+        return columnInfo;
     }
     
     /**
@@ -383,7 +434,7 @@ public class PhoenixRuntime {
      * tenant-specific, the tenant ID column is not expected to have
      * been encoded and will not appear in the returned values.
      * @param conn an open connection
-     * @param fullTableName the full table name
+     * @param name the full table name
      * @param value the value that was encoded with {@link #encodePK(Connection, String, Object[])}
      * @return the Object values encoded in the byte array value
      * @throws SQLException
@@ -403,5 +454,182 @@ public class PhoenixRuntime {
             i++;
         }
         return values;
+    }
+
+    /**
+     * Represents the parsed commandline parameters definining the command or commands to be
+     * executed.
+     */
+    static class ExecutionCommand {
+        private String connectionString;
+        private List<String> columns;
+        private String tableName;
+        private char fieldDelimiter;
+        private char quoteCharacter;
+        private Character escapeCharacter;
+        private String arrayElementSeparator;
+        private boolean strict;
+        private List<String> inputFiles;
+
+        /**
+         * Factory method to build up an {@code ExecutionCommand} based on supplied parameters.
+         */
+        public static ExecutionCommand parseArgs(String[] args) {
+            Option tableOption = new Option("t", "table", true,
+                    "Overrides the table into which the CSV data is loaded and is case sensitive");
+            Option headerOption = new Option("h", "header", true, "Overrides the column names to" +
+                    " which the CSV data maps and is case sensitive. A special value of " +
+                    "in-line indicating that the first line of the CSV file determines the " +
+                    "column to which the data maps");
+            Option strictOption = new Option("s", "strict", false, "Use strict mode by throwing " +
+                    "an exception if a column name doesn't match during CSV loading");
+            Option delimiterOption = new Option("d", "delimiter", true,
+                    "Field delimiter for CSV loader. A digit is interpreted as " +
+                    "1 -> ctrl A, 2 -> ctrl B ... 9 -> ctrl I.");
+            Option quoteCharacterOption = new Option("q", "quote-character", true,
+                    "Quote character for CSV loader. A digit is interpreted as a control " +
+                            "character");
+            Option escapeCharacterOption = new Option("e", "escape-character", true,
+                    "Escape character for CSV loader. A digit is interpreted as a control " +
+                            "character");
+            Option arrayValueSeparatorOption = new Option("a", "array-separator", true,
+                    "Define the array element separator, defaults to ':'");
+            Options options = new Options();
+            options.addOption(tableOption);
+            options.addOption(headerOption);
+            options.addOption(strictOption);
+            options.addOption(delimiterOption);
+            options.addOption(quoteCharacterOption);
+            options.addOption(escapeCharacterOption);
+            options.addOption(arrayValueSeparatorOption);
+
+            CommandLineParser parser = new PosixParser();
+            CommandLine cmdLine = null;
+            try {
+                cmdLine = parser.parse(options, args);
+            } catch (ParseException e) {
+                usageError(options);
+            }
+
+            ExecutionCommand execCmd = new ExecutionCommand();
+
+            if (cmdLine.hasOption(tableOption.getOpt())) {
+                execCmd.tableName = cmdLine.getOptionValue(tableOption.getOpt());
+            }
+
+            if (cmdLine.hasOption(headerOption.getOpt())) {
+                String columnString = cmdLine.getOptionValue(headerOption.getOpt());
+                if (HEADER_IN_LINE.equals(columnString)) {
+                    execCmd.columns = ImmutableList.of();
+                } else {
+                    execCmd.columns = ImmutableList.copyOf(
+                            Splitter.on(",").trimResults().split(columnString));
+                }
+            }
+
+            execCmd.strict = cmdLine.hasOption(strictOption.getOpt());
+            execCmd.fieldDelimiter = getCharacter(
+                    cmdLine.getOptionValue(delimiterOption.getOpt(), ","));
+            execCmd.quoteCharacter = getCharacter(
+                    cmdLine.getOptionValue(quoteCharacterOption.getOpt(), "\""));
+
+            if (cmdLine.hasOption(escapeCharacterOption.getOpt())) {
+                execCmd.escapeCharacter = getCharacter(
+                        cmdLine.getOptionValue(escapeCharacterOption.getOpt(), "\\"));
+            }
+
+            execCmd.arrayElementSeparator = cmdLine.getOptionValue(
+                    arrayValueSeparatorOption.getOpt(),
+                    CSVCommonsLoader.DEFAULT_ARRAY_ELEMENT_SEPARATOR);
+
+
+            List<String> argList = Lists.newArrayList(cmdLine.getArgList());
+            if (argList.isEmpty()) {
+                usageError("Connection string to HBase must be supplied", options);
+            }
+            execCmd.connectionString = argList.remove(0);
+            List<String> inputFiles = Lists.newArrayList();
+            for (String arg : argList) {
+                if (arg.endsWith(CSV_FILE_EXT) || arg.endsWith(SQL_FILE_EXT)) {
+                    inputFiles.add(arg);
+                } else {
+                    usageError("Don't know how to interpret argument '" + arg + "'", options);
+                }
+            }
+
+            if (inputFiles.isEmpty()) {
+                usageError("At least one input file must be supplied", options);
+            }
+
+            execCmd.inputFiles = inputFiles;
+
+
+
+            return execCmd;
+        }
+
+        private static char getCharacter(String s) {
+            if (s.length() > 1) {
+                throw new IllegalArgumentException("Invalid single character: '" + s + "'");
+            }
+            return s.charAt(0);
+        }
+
+        private static void usageError(String errorMsg, Options options) {
+            System.out.println(errorMsg);
+            usageError(options);
+        }
+
+        private static void usageError(Options options) {
+            HelpFormatter formatter = new HelpFormatter();
+            formatter.printHelp(
+                    "psql [-t table-name] [-h comma-separated-column-names | in-line] [-d " +
+                            "field-delimiter-char quote-char escape-char]<zookeeper>  " +
+                            "<path-to-sql-or-csv-file>...",
+                    options);
+            System.out.println("Examples:\n" +
+                    "  psql localhost my_ddl.sql\n" +
+                    "  psql localhost my_ddl.sql my_table.csv\n" +
+                    "  psql -t MY_TABLE my_cluster:1825 my_table2012-Q3.csv\n" +
+                    "  psql -t MY_TABLE -h COL1,COL2,COL3 my_cluster:1825 my_table2012-Q3.csv\n" +
+                    "  psql -t MY_TABLE -h COL1,COL2,COL3 -d : my_cluster:1825 my_table2012-Q3.csv");
+            System.exit(-1);
+        }
+
+        public String getConnectionString() {
+            return connectionString;
+        }
+
+        public List<String> getColumns() {
+            return columns;
+        }
+
+        public String getTableName() {
+            return tableName;
+        }
+
+        public char getFieldDelimiter() {
+            return fieldDelimiter;
+        }
+
+        public char getQuoteCharacter() {
+            return quoteCharacter;
+        }
+
+        public Character getEscapeCharacter() {
+            return escapeCharacter;
+        }
+
+        public String getArrayElementSeparator() {
+            return arrayElementSeparator;
+        }
+
+        public List<String> getInputFiles() {
+            return inputFiles;
+        }
+
+        public boolean isStrict() {
+            return strict;
+        }
     }
 }

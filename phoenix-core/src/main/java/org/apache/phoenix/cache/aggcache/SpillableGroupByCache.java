@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.phoenix.cache.aggcache;
 
 import static org.apache.phoenix.query.QueryConstants.AGG_TIMESTAMP;
@@ -16,17 +34,12 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.io.Closeables;
-import org.apache.hadoop.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.cache.GlobalCache;
 import org.apache.phoenix.cache.TenantCache;
 import org.apache.phoenix.cache.aggcache.SpillManager.CacheEntry;
@@ -35,9 +48,14 @@ import org.apache.phoenix.coprocessor.GroupByCache;
 import org.apache.phoenix.coprocessor.GroupedAggregateRegionObserver;
 import org.apache.phoenix.expression.aggregator.Aggregator;
 import org.apache.phoenix.expression.aggregator.ServerAggregators;
+import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.memory.InsufficientMemoryException;
 import org.apache.phoenix.memory.MemoryManager.MemoryChunk;
 import org.apache.phoenix.util.KeyValueUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.io.Closeables;
 
 /**
  * The main entry point is in GroupedAggregateRegionObserver. It instantiates a SpillableGroupByCache and invokes a
@@ -85,7 +103,7 @@ public class SpillableGroupByCache implements GroupByCache {
     // array types
     private final LinkedHashMap<ImmutableBytesWritable, Aggregator[]> cache;
     private SpillManager spillManager = null;
-    private int curNumCacheElements;
+    private long totalNumElements;
     private final ServerAggregators aggregators;
     private final RegionCoprocessorEnvironment env;
     private final MemoryChunk chunk;
@@ -110,7 +128,7 @@ public class SpillableGroupByCache implements GroupByCache {
      */
     public SpillableGroupByCache(final RegionCoprocessorEnvironment env, ImmutableBytesWritable tenantId,
             ServerAggregators aggs, final int estSizeNum) {
-        curNumCacheElements = 0;
+        totalNumElements = 0;
         this.aggregators = aggs;
         this.env = env;
 
@@ -127,7 +145,7 @@ public class SpillableGroupByCache implements GroupByCache {
 
         // use upper and lower bounds for the cache size
         final int maxCacheSize = Math.max(minSizeNum, Math.min(maxSizeNum, estSizeNum));
-        final int estSize = GroupedAggregateRegionObserver.sizeOfUnorderedGroupByMap(maxCacheSize, estValueSize);
+        final long estSize = GroupedAggregateRegionObserver.sizeOfUnorderedGroupByMap(maxCacheSize, estValueSize);
         try {
             this.chunk = tenantCache.getMemoryManager().allocate(estSize);
         } catch (InsufficientMemoryException ime) {
@@ -149,7 +167,7 @@ public class SpillableGroupByCache implements GroupByCache {
             protected boolean removeEldestEntry(Map.Entry<ImmutableBytesWritable, Aggregator[]> eldest) {
                 if (!spill && size() > cacheSize) { // increase allocation
                     cacheSize *= 1.5f;
-                    int estSize = GroupedAggregateRegionObserver.sizeOfUnorderedGroupByMap(cacheSize, estValueSize);
+                    long estSize = GroupedAggregateRegionObserver.sizeOfUnorderedGroupByMap(cacheSize, estValueSize);
                     try {
                         chunk.resize(estSize);
                     } catch (InsufficientMemoryException im) {
@@ -170,8 +188,6 @@ public class SpillableGroupByCache implements GroupByCache {
                                     new QueryCache());
                         }
                         spillManager.spill(eldest.getKey(), eldest.getValue());
-                        // keep track of elements in cache
-                        curNumCacheElements--;
                     } catch (IOException ioe) {
                         // Ensure that we always close and delete the temp files
                         try {
@@ -189,11 +205,11 @@ public class SpillableGroupByCache implements GroupByCache {
     }
 
     /**
-     * Size function returns the estimate LRU cache size in bytes
+     * Size function returns the current number of cached elements
      */
     @Override
-    public int size() {
-        return curNumCacheElements * aggregators.getEstimatedByteSize();
+    public long size() {
+        return totalNumElements;
     }
 
     /**
@@ -230,9 +246,9 @@ public class SpillableGroupByCache implements GroupByCache {
                             + Bytes.toStringBinary(key.get(), key.getOffset(), key.getLength()));
                 }
             }
-            cache.put(key, rowAggregators);
-            // keep track of elements in cache
-            curNumCacheElements++;
+            if (cache.put(key, rowAggregators) == null) {
+                totalNumElements++;
+            }
         }
         return rowAggregators;
     }
@@ -341,7 +357,7 @@ public class SpillableGroupByCache implements GroupByCache {
             }
 
             @Override
-            public boolean next(List<KeyValue> results) throws IOException {
+            public boolean next(List<Cell> results) throws IOException {
                 if (!cacheIter.hasNext()) { return false; }
                 Map.Entry<ImmutableBytesWritable, Aggregator[]> ce = cacheIter.next();
                 ImmutableBytesWritable key = ce.getKey();
@@ -355,6 +371,11 @@ public class SpillableGroupByCache implements GroupByCache {
                 results.add(KeyValueUtil.newKeyValue(key.get(), key.getOffset(), key.getLength(), SINGLE_COLUMN_FAMILY,
                         SINGLE_COLUMN, AGG_TIMESTAMP, value, 0, value.length));
                 return cacheIter.hasNext();
+            }
+
+            @Override
+            public long getMaxResultSize() {
+              return s.getMaxResultSize();
             }
         };
     }

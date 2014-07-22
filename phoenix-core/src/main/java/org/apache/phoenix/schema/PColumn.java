@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,15 +17,13 @@
  */
 package org.apache.phoenix.schema;
 
-import org.apache.hadoop.io.Writable;
-
 /**
  * Definition of a Phoenix column
  *
  * 
  * @since 0.1
  */
-public interface PColumn extends PDatum, Writable {
+public interface PColumn extends PDatum {
 
     /**
      * @return the name of the column qualifier
@@ -48,4 +44,10 @@ public interface PColumn extends PDatum, Writable {
      * @return the declared array size or zero if this is not an array
      */
     Integer getArraySize();
+    
+    byte[] getViewConstant();
+    
+    boolean isViewReferenced();
+    
+    int getEstimatedSize();
 }

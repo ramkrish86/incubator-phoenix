@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,12 +23,16 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.Type;
+import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.filter.FilterBase;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Writables;
+import org.apache.hadoop.io.Writable;
 import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.query.KeyRange.Bound;
 import org.apache.phoenix.query.QueryConstants;
@@ -55,7 +57,7 @@ import com.google.common.hash.Hashing;
  * 
  * @since 0.1
  */
-public class SkipScanFilter extends FilterBase {
+public class SkipScanFilter extends FilterBase implements Writable {
     private enum Terminate {AT, AFTER};
     // Conjunctive normal form of or-ed ranges or point lookups
     private List<List<KeyRange>> slots;
@@ -110,8 +112,8 @@ public class SkipScanFilter extends FilterBase {
     }
 
     @Override
-    public ReturnCode filterKeyValue(KeyValue kv) {
-        return navigate(kv.getBuffer(), kv.getRowOffset(),kv.getRowLength(),Terminate.AFTER);
+    public ReturnCode filterKeyValue(Cell kv) {
+        return navigate(kv.getRowArray(), kv.getRowOffset(),kv.getRowLength(),Terminate.AFTER);
     }
 
     @Override
@@ -135,6 +137,15 @@ public class SkipScanFilter extends FilterBase {
             return new SkipScanFilter(newSlots, schema);
         }
         return null;
+    }
+    
+    private boolean areSlotsSingleKey(int startPosInclusive, int endPosExclusive) {
+        for (int i = startPosInclusive; i < endPosExclusive; i++) {
+            if (!slots.get(i).get(position[i]).isSingleKey()) {
+                return false;
+            }
+        }
+        return true;
     }
     
     private boolean intersect(byte[] lowerInclusiveKey, byte[] upperExclusiveKey, List<List<KeyRange>> newSlots) {
@@ -197,7 +208,7 @@ public class SkipScanFilter extends FilterBase {
         } else if (endCode == ReturnCode.SEEK_NEXT_USING_HINT) {
             // The upperExclusive key is smaller than the slots stored in the position. Check if it's the same position
             // as the slots for lowerInclusive. If so, there is no intersection.
-            if (Arrays.equals(lowerPosition, position)) {
+            if (Arrays.equals(lowerPosition, position) && areSlotsSingleKey(0, position.length-1)) {
                 return false;
             }
         }
@@ -457,6 +468,19 @@ public class SkipScanFilter extends FilterBase {
             for (KeyRange range : orclause) {
                 range.write(out);
             }
+        }
+    }
+    
+    @Override
+    public byte[] toByteArray() throws IOException {
+        return Writables.getBytes(this);
+    }
+    
+    public static SkipScanFilter parseFrom(final byte [] pbBytes) throws DeserializationException {
+        try {
+            return (SkipScanFilter)Writables.getWritable(pbBytes, new SkipScanFilter());
+        } catch (IOException e) {
+            throw new DeserializationException(e);
         }
     }
 

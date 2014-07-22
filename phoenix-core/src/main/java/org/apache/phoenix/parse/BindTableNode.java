@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -31,22 +29,14 @@ import java.sql.SQLException;
  * @since 0.1
  */
 public class BindTableNode extends ConcreteTableNode {
-    
-    public static BindTableNode create(String alias, TableName name, boolean isRewrite) {
-        return new BindTableNode(alias, name, isRewrite);
-    }
 
     BindTableNode(String alias, TableName name) {
-        this(alias, name, false);
-    }
-    
-    BindTableNode(String alias, TableName name, boolean isRewrite) {
-        super(alias, name, isRewrite);
+        super(alias, name);
     }
 
     @Override
-    public void accept(TableNodeVisitor visitor) throws SQLException {
-        visitor.visit(this);
+    public <T> T accept(TableNodeVisitor<T> visitor) throws SQLException {
+        return visitor.visit(this);
     }
 
 }

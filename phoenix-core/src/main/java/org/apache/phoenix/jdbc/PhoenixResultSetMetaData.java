@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +17,9 @@
  */
 package org.apache.phoenix.jdbc;
 
-import java.sql.*;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Types;
 
 import org.apache.phoenix.compile.ColumnProjector;
 import org.apache.phoenix.compile.RowProjector;
@@ -93,8 +93,8 @@ public class PhoenixResultSetMetaData implements ResultSetMetaData {
         if (type.isCoercibleTo(PDataType.DATE)) {
             return Math.min(Math.max(displaySize, connection.getDatePattern().length()), MAX_DISPLAY_WIDTH);
         }
-        if (projector.getExpression().getByteSize() != null) {
-            return Math.min(Math.max(displaySize, projector.getExpression().getByteSize()), MAX_DISPLAY_WIDTH);
+        if (type.isFixedWidth() && projector.getExpression().getMaxLength() != null) {
+            return Math.min(Math.max(displaySize, projector.getExpression().getMaxLength()), MAX_DISPLAY_WIDTH);
         }
         
         return Math.min(Math.max(displaySize, DEFAULT_DISPLAY_WIDTH), MAX_DISPLAY_WIDTH);

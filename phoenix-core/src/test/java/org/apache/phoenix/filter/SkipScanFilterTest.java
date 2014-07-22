@@ -1,5 +1,24 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.phoenix.filter;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -9,6 +28,13 @@ import junit.framework.TestCase;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.filter.Filter.ReturnCode;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.query.KeyRange;
+import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.PDatum;
+import org.apache.phoenix.schema.RowKeySchema.RowKeySchemaBuilder;
+import org.apache.phoenix.schema.SortOrder;
+import org.apache.phoenix.util.ByteUtil;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -16,13 +42,6 @@ import org.junit.runners.Parameterized.Parameters;
 
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
-import org.apache.phoenix.query.KeyRange;
-import org.apache.phoenix.query.QueryConstants;
-import org.apache.phoenix.schema.ColumnModifier;
-import org.apache.phoenix.schema.PDataType;
-import org.apache.phoenix.schema.PDatum;
-import org.apache.phoenix.schema.RowKeySchema.RowKeySchemaBuilder;
-import org.apache.phoenix.util.ByteUtil;
 
 //reset()
 //filterAllRemaining() -> true indicates scan is over, false, keep going on.
@@ -55,13 +74,8 @@ public class SkipScanFilterTest extends TestCase {
                 }
 
                 @Override
-                public Integer getByteSize() {
-                    return width <= 0 ? null : width;
-                }
-
-                @Override
                 public Integer getMaxLength() {
-                    return getByteSize();
+                    return width <= 0 ? null : width;
                 }
 
                 @Override
@@ -70,17 +84,17 @@ public class SkipScanFilterTest extends TestCase {
                 }
 
 				@Override
-				public ColumnModifier getColumnModifier() {
-					return null;
+				public SortOrder getSortOrder() {
+					return SortOrder.getDefault();
 				}
                 
-            }, width <= 0, null);
+            }, width <= 0, SortOrder.getDefault());
         }
         skipper = new SkipScanFilter(cnf, builder.build());
     }
 
     @Test
-    public void test() {
+    public void test() throws IOException {
         System.out.println("CNF: " + cnf + "\n" + "Expectations: " + expectations);
         for (Expectation expectation : expectations) {
             expectation.examine(skipper);
@@ -327,7 +341,7 @@ public class SkipScanFilterTest extends TestCase {
     };
 
     static interface Expectation {
-        void examine(SkipScanFilter skipper);
+        void examine(SkipScanFilter skipper) throws IOException;
     }
     private static final class SeekNext implements Expectation {
         private final byte[] rowkey, hint;
@@ -340,7 +354,8 @@ public class SkipScanFilterTest extends TestCase {
             this.hint = hint;
         }
 
-        @Override public void examine(SkipScanFilter skipper) {
+        @SuppressWarnings("deprecation")
+        @Override public void examine(SkipScanFilter skipper) throws IOException {
             KeyValue kv = KeyValue.createFirstOnRow(rowkey);
             skipper.reset();
             assertFalse(skipper.filterAllRemaining());
@@ -361,7 +376,8 @@ public class SkipScanFilterTest extends TestCase {
             this.rowkey = Bytes.toBytes(rowkey);
         }
         
-        @Override public void examine(SkipScanFilter skipper) {
+        @SuppressWarnings("deprecation")
+        @Override public void examine(SkipScanFilter skipper) throws IOException {
             KeyValue kv = KeyValue.createFirstOnRow(rowkey);
             skipper.reset();
             assertFalse(skipper.filterAllRemaining());
@@ -380,7 +396,7 @@ public class SkipScanFilterTest extends TestCase {
             this.rowkey = Bytes.toBytes(rowkey);
         }
 
-        @Override public void examine(SkipScanFilter skipper) {
+        @Override public void examine(SkipScanFilter skipper) throws IOException {
             KeyValue kv = KeyValue.createFirstOnRow(rowkey);
             skipper.reset();
             assertEquals(ReturnCode.NEXT_ROW,skipper.filterKeyValue(kv));

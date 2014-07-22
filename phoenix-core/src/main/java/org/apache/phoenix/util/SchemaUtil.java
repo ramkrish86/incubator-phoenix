@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +17,7 @@
  */
 package org.apache.phoenix.util;
 
-import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.TYPE_TABLE_NAME_BYTES;
+import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.SYSTEM_CATALOG_NAME_BYTES;
 
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -29,18 +27,17 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Properties;
 
-import org.apache.hadoop.hbase.index.util.ImmutableBytesPtr;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
+import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
 import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.AmbiguousColumnException;
 import org.apache.phoenix.schema.ColumnFamilyNotFoundException;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.ColumnNotFoundException;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PColumnFamily;
@@ -52,9 +49,10 @@ import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.RowKeySchema;
 import org.apache.phoenix.schema.RowKeySchema.RowKeySchemaBuilder;
 import org.apache.phoenix.schema.SaltingUtil;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.ValueSchema.Field;
 
-
+import com.google.common.base.Preconditions;
 
 /**
  * 
@@ -65,7 +63,7 @@ import org.apache.phoenix.schema.ValueSchema.Field;
  */
 public class SchemaUtil {
     private static final int VAR_LENGTH_ESTIMATE = 10;
-    
+    public static final String ESCAPE_CHARACTER = "\"";
     public static final DataBlockEncoding DEFAULT_DATA_BLOCK_ENCODING = DataBlockEncoding.FAST_DIFF;
     public static final PDatum VAR_BINARY_DATUM = new PDatum() {
     
@@ -80,11 +78,6 @@ public class SchemaUtil {
         }
     
         @Override
-        public Integer getByteSize() {
-            return null;
-        }
-    
-        @Override
         public Integer getMaxLength() {
             return null;
         }
@@ -95,12 +88,12 @@ public class SchemaUtil {
         }
     
         @Override
-        public ColumnModifier getColumnModifier() {
-            return null;
+        public SortOrder getSortOrder() {
+            return SortOrder.getDefault();
         }
         
     };
-    public static final RowKeySchema VAR_BINARY_SCHEMA = new RowKeySchemaBuilder(1).addField(VAR_BINARY_DATUM, false, null).build();
+    public static final RowKeySchema VAR_BINARY_SCHEMA = new RowKeySchemaBuilder(1).addField(VAR_BINARY_DATUM, false, SortOrder.getDefault()).build();
     
     /**
      * May not be instantiated
@@ -124,8 +117,9 @@ public class SchemaUtil {
         List<PColumn> columns = table.getPKColumns();
         while (i < columns.size()) {
             PColumn keyColumn = columns.get(i++);
-            Integer byteSize = keyColumn.getByteSize();
-            maxKeyLength += (byteSize == null) ? VAR_LENGTH_ESTIMATE : byteSize;
+            PDataType type = keyColumn.getDataType();
+            Integer maxLength = keyColumn.getMaxLength();
+            maxKeyLength += !type.isFixedWidth() ? VAR_LENGTH_ESTIMATE : maxLength == null ? type.getByteSize() : maxLength;
         }
         return maxKeyLength;
     }
@@ -347,7 +341,7 @@ public class SchemaUtil {
     }
 
     public static boolean isMetaTable(byte[] tableName) {
-        return Bytes.compareTo(tableName, TYPE_TABLE_NAME_BYTES) == 0;
+        return Bytes.compareTo(tableName, SYSTEM_CATALOG_NAME_BYTES) == 0;
     }
     
     public static boolean isSequenceTable(byte[] tableName) {
@@ -355,15 +349,15 @@ public class SchemaUtil {
     }
 
     public static boolean isMetaTable(PTable table) {
-        return PhoenixDatabaseMetaData.TYPE_SCHEMA.equals(table.getSchemaName().getString()) && PhoenixDatabaseMetaData.TYPE_TABLE.equals(table.getTableName().getString());
+        return PhoenixDatabaseMetaData.SYSTEM_CATALOG_SCHEMA.equals(table.getSchemaName().getString()) && PhoenixDatabaseMetaData.SYSTEM_CATALOG_TABLE.equals(table.getTableName().getString());
     }
     
     public static boolean isMetaTable(byte[] schemaName, byte[] tableName) {
-        return Bytes.compareTo(schemaName, PhoenixDatabaseMetaData.TYPE_SCHEMA_BYTES) == 0 && Bytes.compareTo(tableName, PhoenixDatabaseMetaData.TYPE_TABLE_BYTES) == 0;
+        return Bytes.compareTo(schemaName, PhoenixDatabaseMetaData.SYSTEM_CATALOG_TABLE_BYTES) == 0 && Bytes.compareTo(tableName, PhoenixDatabaseMetaData.SYSTEM_CATALOG_SCHEMA_BYTES) == 0;
     }
     
     public static boolean isMetaTable(String schemaName, String tableName) {
-        return PhoenixDatabaseMetaData.TYPE_SCHEMA.equals(schemaName) && PhoenixDatabaseMetaData.TYPE_TABLE.equals(tableName);
+        return PhoenixDatabaseMetaData.SYSTEM_CATALOG_SCHEMA.equals(schemaName) && PhoenixDatabaseMetaData.SYSTEM_CATALOG_TABLE.equals(tableName);
     }
 
     // Given the splits and the rowKeySchema, find out the keys that 
@@ -394,7 +388,7 @@ public class SchemaUtil {
         while (pos < pkColumns.size()) {
             PColumn column = iterator.next();
             if (column.getDataType().isFixedWidth()) { // Fixed width
-                int length = column.getByteSize();
+                int length = SchemaUtil.getFixedByteSize(column);
                 if (maxOffset - offset < length) {
                     // The split truncates the field. Fill in the rest of the part and any fields that
                     // are missing after this field.
@@ -433,7 +427,7 @@ public class SchemaUtil {
         while (iterator.hasNext()) {
             PColumn column = iterator.next();
             if (column.getDataType().isFixedWidth()) {
-                length += column.getByteSize();
+                length += SchemaUtil.getFixedByteSize(column);
             } else {
                 length += 1; // SEPARATOR byte.
             }
@@ -441,9 +435,6 @@ public class SchemaUtil {
         return length;
     }
     
-    public static final String UPGRADE_TO_2_0 = "UpgradeTo20";
-    public static final String UPGRADE_TO_2_1 = "UpgradeTo21";
-
     public static String getEscapedTableName(String schemaName, String tableName) {
         if (schemaName == null || schemaName.length() == 0) {
             return "\"" + tableName + "\"";
@@ -454,7 +445,7 @@ public class SchemaUtil {
     protected static PhoenixConnection addMetaDataColumn(PhoenixConnection conn, long scn, String columnDef) throws SQLException {
         String url = conn.getURL();
         Properties props = conn.getClientInfo();
-        PMetaData metaData = conn.getPMetaData();
+        PMetaData metaData = conn.getMetaDataCache();
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(scn));
         PhoenixConnection metaConnection = null;
 
@@ -541,5 +532,53 @@ public class SchemaUtil {
             maxKeyLength += maxSlotLength;
         }
         return maxKeyLength;
+    }
+
+    public static int getFixedByteSize(PDatum e) {
+        assert(e.getDataType().isFixedWidth());
+        Integer maxLength = e.getMaxLength();
+        return maxLength == null ? e.getDataType().getByteSize() : maxLength;
+    }
+    
+    public static short getMaxKeySeq(PTable table) {
+        int offset = 0;
+        if (table.getBucketNum() != null) {
+            offset++;
+        }
+        // TODO: for tenant-specific table on tenant-specific connection,
+        // we should subtract one for tenant column and another one for
+        // index ID
+        return (short)(table.getPKColumns().size() - offset);
+    }
+
+    public static int getPKPosition(PTable table, PColumn column) {
+        // TODO: when PColumn has getPKPosition, use that instead
+        return table.getPKColumns().indexOf(column);
+    }
+    
+    public static String getEscapedFullColumnName(String fullColumnName) {
+        int index = fullColumnName.indexOf(QueryConstants.NAME_SEPARATOR);
+        if (index < 0) {
+            return getEscapedArgument(fullColumnName); 
+        }
+        String columnFamily = fullColumnName.substring(0,index);
+        String columnName = fullColumnName.substring(index+1);
+        return getEscapedArgument(columnFamily) + QueryConstants.NAME_SEPARATOR + getEscapedArgument(columnName) ;
+    }
+    
+    public static String getEscapedFullTableName(String fullTableName) {
+        final String schemaName = getSchemaNameFromFullName(fullTableName);
+        final String tableName = getTableNameFromFullName(fullTableName);
+        return getEscapedTableName(schemaName, tableName);
+    }
+    
+    /**
+     * Escapes the given argument with {@value #ESCAPE_CHARACTER}
+     * @param argument any non null value.
+     * @return 
+     */
+    public static String getEscapedArgument(String argument) {
+        Preconditions.checkNotNull(argument,"Argument passed cannot be null");
+        return ESCAPE_CHARACTER + argument + ESCAPE_CHARACTER;
     }
 }

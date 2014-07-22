@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,6 +23,8 @@ import java.io.IOException;
 
 import org.apache.hadoop.hbase.filter.FilterBase;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.util.Writables;
+import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.ExpressionType;
@@ -40,10 +40,9 @@ import org.apache.phoenix.util.ServerUtil;
  * 
  * @since 0.1
  */
-abstract public class BooleanExpressionFilter extends FilterBase {
+abstract public class BooleanExpressionFilter extends FilterBase implements Writable {
 
     protected Expression expression;
-    protected boolean evaluateOnCompletion;
     private ImmutableBytesWritable tempPtr = new ImmutableBytesWritable();
     
     public BooleanExpressionFilter() {
@@ -53,12 +52,8 @@ abstract public class BooleanExpressionFilter extends FilterBase {
         this.expression = expression;
     }
 
-    protected void setEvaluateOnCompletion(boolean evaluateOnCompletion) {
-        this.evaluateOnCompletion = evaluateOnCompletion;
-    }
-    
-    protected boolean evaluateOnCompletion() {
-        return evaluateOnCompletion;
+    public Expression getExpression() {
+        return expression;
     }
     
     @Override
@@ -117,7 +112,12 @@ abstract public class BooleanExpressionFilter extends FilterBase {
             ServerUtil.throwIOException("BooleanExpressionFilter failed during writing", t);
         }
     }
-    
+
+    @Override
+    public byte[] toByteArray() throws IOException {
+        return Writables.getBytes(this);
+    }
+
     @Override
     public void reset() {
         expression.reset();

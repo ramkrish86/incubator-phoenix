@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +17,15 @@
  */
 package org.apache.phoenix.job;
 
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.RunnableFuture;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
@@ -56,9 +62,13 @@ public class JobManager<T> extends AbstractRoundRobinQueue<T> {
         } else {
             queue = new JobManager<Runnable>(queueSize);
         }
-        ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat(
-				"phoenix-" + PHOENIX_POOL_INDEX.getAndIncrement()
-						+ "-thread-%s").build();
+
+        ThreadFactory threadFactory = new ThreadFactoryBuilder()
+                .setNameFormat("phoenix-" + PHOENIX_POOL_INDEX.getAndIncrement() + "-thread-%s")
+                .setDaemon(true)
+                .setThreadFactory(
+                        new ContextClassLoaderThreadFactory(JobManager.class.getClassLoader()))
+                .build();
         // For thread pool, set core threads = max threads -- we don't ever want to exceed core threads, but want to go up to core threads *before* using the queue.
         ThreadPoolExecutor exec = new ThreadPoolExecutor(size, size, keepAliveMs, TimeUnit.MILLISECONDS, queue, threadFactory) {
             @Override
@@ -69,7 +79,7 @@ public class JobManager<T> extends AbstractRoundRobinQueue<T> {
     
             @Override
             protected <T> RunnableFuture<T> newTaskFor(Runnable runnable, T value) {
-                return new JobFutureTask<T>((JobRunnable)runnable, value);
+                return new JobFutureTask<T>(runnable, value);
             }
             
         };
@@ -84,9 +94,13 @@ public class JobManager<T> extends AbstractRoundRobinQueue<T> {
     static class JobFutureTask<T> extends FutureTask<T> {
         private final Object jobId;
         
-        public JobFutureTask(JobRunnable r, T t) {
+        public JobFutureTask(Runnable r, T t) {
             super(r, t);
-            this.jobId = r.getJobId();
+            if(r instanceof JobRunnable){
+              	this.jobId = ((JobRunnable)r).getJobId();
+            } else {
+            	this.jobId = this;
+            }
         }
         
         public JobFutureTask(Callable<T> c) {
@@ -110,6 +124,32 @@ public class JobManager<T> extends AbstractRoundRobinQueue<T> {
      */
     public static interface JobCallable<T> extends Callable<T> {
         public Object getJobId();
+    }
+
+
+    /**
+     * Extension of the default thread factory returned by {@code Executors.defaultThreadFactory}
+     * that sets the context classloader on newly-created threads to be a specific classloader (and
+     * not the context classloader of the calling thread).
+     * <p/>
+     * See {@link org.apache.phoenix.util.PhoenixContextExecutor} for the rationale on changing
+     * the context classloader.
+     */
+    static class ContextClassLoaderThreadFactory implements ThreadFactory {
+        private final ThreadFactory baseFactory;
+        private final ClassLoader contextClassLoader;
+
+        public ContextClassLoaderThreadFactory(ClassLoader contextClassLoader) {
+            baseFactory = Executors.defaultThreadFactory();
+            this.contextClassLoader = contextClassLoader;
+        }
+
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = baseFactory.newThread(r);
+            t.setContextClassLoader(contextClassLoader);
+            return t;
+        }
     }
 }
 

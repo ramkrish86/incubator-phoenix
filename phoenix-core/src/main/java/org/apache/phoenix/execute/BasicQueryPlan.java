@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,10 +22,8 @@ import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
-import com.google.common.collect.Lists;
 import org.apache.phoenix.compile.ExplainPlan;
 import org.apache.phoenix.compile.GroupByCompiler.GroupBy;
 import org.apache.phoenix.compile.OrderByCompiler.OrderBy;
@@ -40,11 +36,12 @@ import org.apache.phoenix.iterate.ParallelIterators.ParallelIteratorFactory;
 import org.apache.phoenix.iterate.ResultIterator;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.parse.FilterableStatement;
-import org.apache.phoenix.query.ConnectionQueryServices;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.util.SQLCloseable;
 import org.apache.phoenix.util.SQLCloseables;
 import org.apache.phoenix.util.ScanUtil;
+
+import com.google.common.collect.Lists;
 
 
 
@@ -84,6 +81,12 @@ public abstract class BasicQueryPlan implements QueryPlan {
     }
 
     @Override
+    public boolean isDegenerate() {
+        return context.getScanRanges() == ScanRanges.NOTHING;
+
+    }
+    
+    @Override
     public GroupBy getGroupBy() {
         return groupBy;
     }
@@ -107,14 +110,6 @@ public abstract class BasicQueryPlan implements QueryPlan {
     @Override
     public RowProjector getProjector() {
         return projection;
-    }
-
-    protected ConnectionQueryServices getConnectionQueryServices(ConnectionQueryServices services) {
-        // Get child services associated with tenantId of query.
-        ConnectionQueryServices childServices = context.getConnection().getTenantId() == null ? 
-                services : 
-                services.getChildQueryServices(new ImmutableBytesWritable(context.getConnection().getTenantId().getBytes()));
-        return childServices;
     }
 
 //    /**
@@ -145,7 +140,15 @@ public abstract class BasicQueryPlan implements QueryPlan {
         // TODO: include time range in explain plan?
         PhoenixConnection connection = context.getConnection();
         Long scn = connection.getSCN();
-        ScanUtil.setTimeRange(scan, scn == null ? context.getCurrentTime() : scn);
+        if(scn == null) {
+            scn = context.getCurrentTime();
+            // Add one to server time since max of time range is exclusive
+            // and we need to account of OSs with lower resolution clocks.
+            if(scn < HConstants.LATEST_TIMESTAMP) {
+                scn++;
+            }
+        }
+        ScanUtil.setTimeRange(scan, scn);
         ScanUtil.setTenantId(scan, connection.getTenantId() == null ? null : connection.getTenantId().getBytes());
         ResultIterator iterator = newIterator();
         return dependencies.isEmpty() ? 
@@ -189,7 +192,9 @@ public abstract class BasicQueryPlan implements QueryPlan {
             return new ExplainPlan(Collections.singletonList("DEGENERATE SCAN OVER " + tableRef.getTable().getName().getString()));
         }
         
-        ResultIterator iterator = iterator();
+        // Optimize here when getting explain plan, as queries don't get optimized until after compilation
+        QueryPlan plan = context.getConnection().getQueryServices().getOptimizer().optimize(context.getStatement(), this);
+        ResultIterator iterator = plan.iterator();
         List<String> planSteps = Lists.newArrayListWithExpectedSize(5);
         iterator.explain(planSteps);
         return new ExplainPlan(planSteps);

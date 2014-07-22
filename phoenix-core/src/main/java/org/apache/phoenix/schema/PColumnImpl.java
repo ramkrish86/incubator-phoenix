@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,22 +17,14 @@
  */
 package org.apache.phoenix.schema;
 
-import java.io.DataInput;
-import java.io.DataOutput;
-import java.io.IOException;
-
-import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.io.WritableUtils;
+import org.apache.phoenix.coprocessor.generated.PTableProtos;
 import org.apache.phoenix.query.QueryConstants;
-import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.SizedUtil;
 
 import com.google.common.base.Preconditions;
-
+import com.google.protobuf.HBaseZeroCopyByteString;
 
 public class PColumnImpl implements PColumn {
-    private static final Integer NO_MAXLENGTH = Integer.MIN_VALUE;
-    private static final Integer NO_SCALE = Integer.MIN_VALUE;
-
     private PName name;
     private PName familyName;
     private PDataType dataType;
@@ -42,8 +32,10 @@ public class PColumnImpl implements PColumn {
     private Integer scale;
     private boolean nullable;
     private int position;
-    private ColumnModifier columnModifier;
+    private SortOrder sortOrder;
     private Integer arraySize;
+    private byte[] viewConstant;
+    private boolean isViewReferenced;
 
     public PColumnImpl() {
     }
@@ -55,13 +47,13 @@ public class PColumnImpl implements PColumn {
                        Integer scale,
                        boolean nullable,
                        int position,
-                       ColumnModifier sortOrder, Integer arrSize) {
-        init(name, familyName, dataType, maxLength, scale, nullable, position, sortOrder, arrSize);
+                       SortOrder sortOrder, Integer arrSize, byte[] viewConstant, boolean isViewReferenced) {
+        init(name, familyName, dataType, maxLength, scale, nullable, position, sortOrder, arrSize, viewConstant, isViewReferenced);
     }
 
     public PColumnImpl(PColumn column, int position) {
         this(column.getName(), column.getFamilyName(), column.getDataType(), column.getMaxLength(),
-                column.getScale(), column.isNullable(), position, column.getColumnModifier(), column.getArraySize());
+                column.getScale(), column.isNullable(), position, column.getSortOrder(), column.getArraySize(), column.getViewConstant(), column.isViewReferenced());
     }
 
     private void init(PName name,
@@ -71,8 +63,10 @@ public class PColumnImpl implements PColumn {
             Integer scale,
             boolean nullable,
             int position,
-            ColumnModifier columnModifier,
-            Integer arrSize) {
+            SortOrder sortOrder,
+            Integer arrSize,
+            byte[] viewConstant, boolean isViewReferenced) {
+    	Preconditions.checkNotNull(sortOrder);
         this.dataType = dataType;
         if (familyName == null) {
             // Allow nullable columns in PK, but only if they're variable length.
@@ -89,8 +83,17 @@ public class PColumnImpl implements PColumn {
         this.scale = scale;
         this.nullable = nullable;
         this.position = position;
-        this.columnModifier = columnModifier;
+        this.sortOrder = sortOrder;
         this.arraySize = arrSize;
+        this.viewConstant = viewConstant;
+        this.isViewReferenced = isViewReferenced;
+    }
+
+    @Override
+    public int getEstimatedSize() {
+        return SizedUtil.OBJECT_SIZE + SizedUtil.POINTER_SIZE * 8 + SizedUtil.INT_OBJECT_SIZE * 3 + SizedUtil.INT_SIZE + 
+                name.getEstimatedSize() + (familyName == null ? 0 : familyName.getEstimatedSize()) +
+                (viewConstant == null ? 0 : (SizedUtil.ARRAY_SIZE + viewConstant.length));
     }
 
     @Override
@@ -119,13 +122,6 @@ public class PColumnImpl implements PColumn {
     }
 
     @Override
-    public Integer getByteSize() {
-        Integer dataTypeMaxLength = dataType.getByteSize();
-        return dataTypeMaxLength == null ? dataType.estimateByteSizeFromLength(maxLength)
-                : dataTypeMaxLength;
-    }
-
-    @Override
     public boolean isNullable() {
         return nullable;
     }
@@ -136,44 +132,13 @@ public class PColumnImpl implements PColumn {
     }
     
     @Override
-    public ColumnModifier getColumnModifier() {
-    	return columnModifier;
+    public SortOrder getSortOrder() {
+    	return sortOrder;
     }
 
     @Override
     public String toString() {
         return (familyName == null ? "" : familyName.toString() + QueryConstants.NAME_SEPARATOR) + name.toString();
-    }
-
-    @Override
-    public void readFields(DataInput input) throws IOException {
-        byte[] columnNameBytes = Bytes.readByteArray(input);
-        PName columnName = PNameFactory.newName(columnNameBytes);
-        byte[] familyNameBytes = Bytes.readByteArray(input);
-        PName familyName = familyNameBytes.length == 0 ? null : PNameFactory.newName(familyNameBytes);
-        // TODO: optimize the reading/writing of this b/c it could likely all fit in a single byte or two
-        PDataType dataType = PDataType.values()[WritableUtils.readVInt(input)];
-        int maxLength = WritableUtils.readVInt(input);
-        int scale = WritableUtils.readVInt(input);
-        boolean nullable = input.readBoolean();
-        int position = WritableUtils.readVInt(input);
-        ColumnModifier columnModifier = ColumnModifier.fromSystemValue(WritableUtils.readVInt(input));
-        int arrSize = WritableUtils.readVInt(input);
-        init(columnName, familyName, dataType, maxLength == NO_MAXLENGTH ? null : maxLength,
-                scale == NO_SCALE ? null : scale, nullable, position, columnModifier, arrSize == -1 ? null : arrSize);
-    }
-
-    @Override
-    public void write(DataOutput output) throws IOException {
-        Bytes.writeByteArray(output, name.getBytes());
-        Bytes.writeByteArray(output, familyName == null ? ByteUtil.EMPTY_BYTE_ARRAY : familyName.getBytes());
-        WritableUtils.writeVInt(output, dataType.ordinal());
-        WritableUtils.writeVInt(output, maxLength == null ? NO_MAXLENGTH : maxLength);
-        WritableUtils.writeVInt(output, scale == null ? NO_SCALE : scale);
-        output.writeBoolean(nullable);
-        WritableUtils.writeVInt(output, position);
-        WritableUtils.writeVInt(output, ColumnModifier.toSystemValue(columnModifier));
-        WritableUtils.writeVInt(output, arraySize == null ? -1 : arraySize);
     }
     
     @Override
@@ -203,5 +168,82 @@ public class PColumnImpl implements PColumn {
     @Override
     public Integer getArraySize() {
         return arraySize;
+    }
+
+    @Override
+    public byte[] getViewConstant() {
+        return viewConstant;
+    }
+
+    @Override
+    public boolean isViewReferenced() {
+        return isViewReferenced;
+    }
+
+    /**
+     * Create a PColumn instance from PBed PColumn instance
+     * 
+     * @param column
+     */
+    public static PColumn createFromProto(PTableProtos.PColumn column) {
+        byte[] columnNameBytes = column.getColumnNameBytes().toByteArray();
+        PName columnName = PNameFactory.newName(columnNameBytes);
+        PName familyName = null;
+        if (column.hasFamilyNameBytes()) {
+            familyName = PNameFactory.newName(column.getFamilyNameBytes().toByteArray());
+        }
+        PDataType dataType = PDataType.fromSqlTypeName(column.getDataType());
+        Integer maxLength = null;
+        if (column.hasMaxLength()) {
+            maxLength = column.getMaxLength();
+        }
+        Integer scale = null;
+        if (column.hasScale()) {
+            scale = column.getScale();
+        }
+        boolean nullable = column.getNullable();
+        int position = column.getPosition();
+        SortOrder sortOrder = SortOrder.fromSystemValue(column.getSortOrder());
+        Integer arraySize = null;
+        if (column.hasArraySize()) {
+            arraySize = column.getArraySize();
+        }
+        byte[] viewConstant = null;
+        if (column.hasViewConstant()) {
+            viewConstant = column.getViewConstant().toByteArray();
+        }
+        boolean isViewReferenced = false;
+        if (column.hasViewReferenced()) {
+            isViewReferenced = column.getViewReferenced();
+        }
+
+        return new PColumnImpl(columnName, familyName, dataType, maxLength, scale, nullable, position, sortOrder,
+                arraySize, viewConstant, isViewReferenced);
+    }
+
+    public static PTableProtos.PColumn toProto(PColumn column) {
+        PTableProtos.PColumn.Builder builder = PTableProtos.PColumn.newBuilder();
+        builder.setColumnNameBytes(HBaseZeroCopyByteString.wrap(column.getName().getBytes()));
+        if (column.getFamilyName() != null) {
+            builder.setFamilyNameBytes(HBaseZeroCopyByteString.wrap(column.getFamilyName().getBytes()));
+        }
+        builder.setDataType(column.getDataType().getSqlTypeName());
+        if (column.getMaxLength() != null) {
+            builder.setMaxLength(column.getMaxLength());
+        }
+        if (column.getScale() != null) {
+            builder.setScale(column.getScale());
+        }
+        builder.setNullable(column.isNullable());
+        builder.setPosition(column.getPosition());
+        builder.setSortOrder(column.getSortOrder().getSystemValue());
+        if (column.getArraySize() != null) {
+            builder.setArraySize(column.getArraySize());
+        }
+        if (column.getViewConstant() != null) {
+            builder.setViewConstant(HBaseZeroCopyByteString.wrap(column.getViewConstant()));
+        }
+        builder.setViewReferenced(column.isViewReferenced());
+        return builder.build();
     }
 }

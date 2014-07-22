@@ -1,6 +1,4 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,10 +21,9 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
 import org.apache.phoenix.exception.ValueTypeIncompatibleException;
-import org.apache.phoenix.schema.ColumnModifier;
 import org.apache.phoenix.schema.PDataType;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.util.NumberUtil;
 
@@ -47,15 +44,13 @@ public class DecimalSubtractExpression extends SubtractExpression {
 
     public DecimalSubtractExpression(List<Expression> children) {
         super(children);
-        for (int i=0; i<children.size(); i++) {
+        Expression firstChild = children.get(0);
+        maxLength = getPrecision(firstChild);
+        scale = getScale(firstChild);
+        for (int i=1; i<children.size(); i++) {
             Expression childExpr = children.get(i);
-            if (i == 0) {
-                maxLength = childExpr.getMaxLength();
-                scale = childExpr.getScale();
-            } else {
-                maxLength = getPrecision(maxLength, childExpr.getMaxLength(), scale, childExpr.getScale());
-                scale = getScale(maxLength, childExpr.getMaxLength(), scale, childExpr.getScale());
-            }
+            maxLength = getPrecision(maxLength, getPrecision(childExpr), scale, getScale(childExpr));
+            scale = getScale(maxLength, getPrecision(childExpr), scale, getScale(childExpr));
         }
     }
 
@@ -73,10 +68,10 @@ public class DecimalSubtractExpression extends SubtractExpression {
             
             PDataType childType = childExpr.getDataType();
             boolean isDate = childType.isCoercibleTo(PDataType.DATE);
-            ColumnModifier childColumnModifier = childExpr.getColumnModifier();
+            SortOrder childSortOrder = childExpr.getSortOrder();
             BigDecimal bd = isDate ?
-                    BigDecimal.valueOf(childType.getCodec().decodeLong(ptr, childColumnModifier)) :
-                    (BigDecimal)PDataType.DECIMAL.toObject(ptr, childType, childColumnModifier);
+                    BigDecimal.valueOf(childType.getCodec().decodeLong(ptr, childSortOrder)) :
+                    (BigDecimal)PDataType.DECIMAL.toObject(ptr, childType, childSortOrder);
             
             if (result == null) {
                 result = bd;
@@ -91,7 +86,7 @@ public class DecimalSubtractExpression extends SubtractExpression {
                 }
             }
         }
-        if (maxLength != null && scale != null) {
+        if (maxLength != null || scale != null) {
             result = NumberUtil.setDecimalWidthAndScale(result, maxLength, scale);
         }
         if (result == null) {
